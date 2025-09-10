@@ -2,32 +2,11 @@
 
 #include <iterator>
 
-#include "Message_generated.h"
 #include "sparrow_ipc/magic_values.hpp"
 #include "sparrow_ipc/utils.hpp"
 
 namespace sparrow_ipc
 {
-    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<org::apache::arrow::flatbuf::Field>>>
-    create_children(flatbuffers::FlatBufferBuilder& builder, const ArrowSchema& arrow_schema)
-    {
-        std::vector<flatbuffers::Offset<org::apache::arrow::flatbuf::Field>> children_vec;
-        children_vec.reserve(arrow_schema.n_children);
-        for (int i = 0; i < arrow_schema.n_children; ++i)
-        {
-            if (arrow_schema.children[i] == nullptr)
-            {
-                throw std::invalid_argument("ArrowSchema has null child at index " + std::to_string(i));
-            }
-            flatbuffers::Offset<org::apache::arrow::flatbuf::Field> field = create_field(
-                builder,
-                *(arrow_schema.children[i])
-            );
-            children_vec.emplace_back(field);
-        }
-        return children_vec.empty() ? 0 : builder.CreateVector(children_vec);
-    }
-
     flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<org::apache::arrow::flatbuf::KeyValue>>>
     create_metadata(flatbuffers::FlatBufferBuilder& builder, const ArrowSchema& arrow_schema)
     {
@@ -72,6 +51,26 @@ namespace sparrow_ipc
         return fb_field;
     }
 
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<org::apache::arrow::flatbuf::Field>>>
+    create_children(flatbuffers::FlatBufferBuilder& builder, const ArrowSchema& arrow_schema)
+    {
+        std::vector<flatbuffers::Offset<org::apache::arrow::flatbuf::Field>> children_vec;
+        children_vec.reserve(arrow_schema.n_children);
+        for (int i = 0; i < arrow_schema.n_children; ++i)
+        {
+            if (arrow_schema.children[i] == nullptr)
+            {
+                throw std::invalid_argument("ArrowSchema has null child at index " + std::to_string(i));
+            }
+            flatbuffers::Offset<org::apache::arrow::flatbuf::Field> field = create_field(
+                builder,
+                *(arrow_schema.children[i])
+            );
+            children_vec.emplace_back(field);
+        }
+        return children_vec.empty() ? 0 : builder.CreateVector(children_vec);
+    }
+
     flatbuffers::FlatBufferBuilder get_schema_message_builder(const ArrowSchema& arrow_schema)
     {
         flatbuffers::FlatBufferBuilder schema_builder;
@@ -86,7 +85,8 @@ namespace sparrow_ipc
             org::apache::arrow::flatbuf::MetadataVersion::V5,
             org::apache::arrow::flatbuf::MessageHeader::Schema,
             schema_offset.Union(),
-            0  // body length IS 0 for schema messages
+            0,  // body length IS 0 for schema messages
+            0   // custom metadata
         );
         schema_builder.Finish(schema_message_offset);
         return schema_builder;
@@ -206,17 +206,78 @@ namespace sparrow_ipc
         return body;
     }
 
+    int64_t calculate_body_size(const sparrow::arrow_proxy& arrow_proxy)
+    {
+        int64_t total_size = 0;
+        for (const auto& buffer : arrow_proxy.buffers())
+        {
+            total_size += utils::align_to_8(static_cast<int64_t>(buffer.size()));
+        }
+        for (const auto& child : arrow_proxy.children())
+        {
+            const auto& child_arrow_proxy = sparrow::detail::array_access::get_arrow_proxy(child);
+            total_size += calculate_body_size(child_arrow_proxy);
+        }
+        return total_size;
+    }
+
+    int64_t calculate_body_size(const sparrow::record_batch& record_batch)
+    {
+        return std::accumulate(
+            record_batch.columns().begin(),
+            record_batch.columns().end(),
+            0,
+            [](int64_t acc, const sparrow::array& arr)
+            {
+                const auto& arrow_proxy = sparrow::detail::array_access::get_arrow_proxy(arr);
+                return acc + calculate_body_size(arrow_proxy);
+            }
+        );
+    }
+
+    flatbuffers::FlatBufferBuilder get_record_batch_message_builder(
+        const sparrow::record_batch& record_batch,
+        const std::vector<org::apache::arrow::flatbuf::FieldNode>& nodes,
+        const std::vector<org::apache::arrow::flatbuf::Buffer>& buffers
+    )
+    {
+        flatbuffers::FlatBufferBuilder record_batch_builder;
+        auto nodes_offset = record_batch_builder.CreateVectorOfStructs(nodes);
+        auto buffers_offset = record_batch_builder.CreateVectorOfStructs(buffers);
+        const auto record_batch_offset = org::apache::arrow::flatbuf::CreateRecordBatch(
+            record_batch_builder,
+            static_cast<int64_t>(record_batch.nb_rows()),
+            nodes_offset,
+            buffers_offset,
+            0,  // TODO: Compression
+            0   // TODO :variadic buffer Counts
+        );
+
+        const int64_t body_size = calculate_body_size(record_batch);
+        const auto record_batch_message_offset = org::apache::arrow::flatbuf::CreateMessage(
+            record_batch_builder,
+            org::apache::arrow::flatbuf::MetadataVersion::V5,
+            org::apache::arrow::flatbuf::MessageHeader::RecordBatch,
+            record_batch_offset.Union(),
+            body_size,  // body length
+            0           // custom metadata
+        );
+        record_batch_builder.Finish(record_batch_message_offset);
+        return record_batch_builder;
+    }
+
     std::vector<uint8_t> serialize_record_batch(const sparrow::record_batch& record_batch)
     {
         std::vector<org::apache::arrow::flatbuf::FieldNode> nodes = create_fieldnodes(record_batch);
         std::vector<org::apache::arrow::flatbuf::Buffer> flatbuf_buffers = get_buffers(record_batch);
         flatbuffers::FlatBufferBuilder record_batch_builder;
-        org::apache::arrow::flatbuf::CreateRecordBatchDirect(
-            record_batch_builder,
-            static_cast<int64_t>(record_batch.nb_rows()),
-            &nodes,
-            &flatbuf_buffers
-        );
+        ::flatbuffers::Offset<org::apache::arrow::flatbuf::RecordBatch>
+            record_batch_offset = org::apache::arrow::flatbuf::CreateRecordBatchDirect(
+                record_batch_builder,
+                static_cast<int64_t>(record_batch.nb_rows()),
+                &nodes,
+                &flatbuf_buffers
+            );
         std::vector<uint8_t> output;
         output.insert(output.end(), continuation.begin(), continuation.end());
         const flatbuffers::uoffset_t record_batch_len = record_batch_builder.GetSize();
@@ -260,7 +321,7 @@ namespace sparrow_ipc
 
     template <std::ranges::input_range R>
         requires std::same_as<std::ranges::range_value_t<R>, sparrow::record_batch>
-    void serialize(const R& record_batches, std::ostream& out)
+    std::vector<uint8_t> serialize(const R& record_batches)
     {
         if (check_record_batches_consistency(record_batches))
         {
@@ -270,5 +331,11 @@ namespace sparrow_ipc
         }
         std::vector<uint8_t> serialized_schema = serialize_schema_message(record_batches[0].schema());
         std::vector<uint8_t> serialized_record_batches = serialize_record_batches(record_batches);
+        serialized_schema.insert(
+            serialized_schema.end(),
+            std::make_move_iterator(serialized_record_batches.begin()),
+            std::make_move_iterator(serialized_record_batches.end())
+        );
+        return serialized_schema;
     }
 }

@@ -456,7 +456,6 @@ namespace sparrow_ipc
             const sparrow::record_batch& first_rb = record_batches[0];
             for (const sparrow::record_batch& rb : record_batches)
             {
-                rb.check_consistency();
                 if (rb.nb_columns() != first_rb.nb_columns())
                 {
                     return false;
@@ -469,7 +468,7 @@ namespace sparrow_ipc
                 {
                     const sparrow::array& arr = rb.get_column(col_idx);
                     const sparrow::array& first_arr = first_rb.get_column(col_idx);
-                    if (arr.format() != first_arr.format())
+                    if (arr.data_type() != first_arr.data_type())
                     {
                         return false;
                     }
@@ -479,6 +478,6 @@ namespace sparrow_ipc
 
         size_t calculate_output_serialized_size(const sparrow::record_batch& record_batch)
         {
-                }
+        }
     }
 }
