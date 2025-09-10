@@ -13,7 +13,7 @@
 #include "doctest/doctest.h"
 #include "sparrow.hpp"
 #include "sparrow_ipc/deserialize.hpp"
-
+#include "sparrow_ipc/serialize.hpp"
 
 const std::filesystem::path arrow_testing_data_dir = ARROW_TESTING_DATA_DIR;
 

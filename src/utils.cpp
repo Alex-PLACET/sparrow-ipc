@@ -444,5 +444,41 @@ namespace sparrow_ipc
                 }
             }
         }
+
+        template <std::ranges::input_range R>
+            requires std::same_as<std::ranges::range_value_t<R>, sparrow::record_batch>
+        bool check_record_batches_consistency(const R& record_batches)
+        {
+            if (record_batches.empty())
+            {
+                return true;
+            }
+            const sparrow::record_batch& first_rb = record_batches[0];
+            for (const sparrow::record_batch& rb : record_batches)
+            {
+                rb.check_consistency();
+                if (rb.nb_columns() != first_rb.nb_columns())
+                {
+                    return false;
+                }
+                if (rb.nb_rows() != first_rb.nb_rows())
+                {
+                    return false;
+                }
+                for (size_t col_idx = 0; col_idx < rb.nb_columns(); ++col_idx)
+                {
+                    const sparrow::array& arr = rb.get_column(col_idx);
+                    const sparrow::array& first_arr = first_rb.get_column(col_idx);
+                    if (arr.format() != first_arr.format())
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        size_t calculate_output_serialized_size(const sparrow::record_batch& record_batch)
+        {
+                }
     }
 }
