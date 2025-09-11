@@ -56,25 +56,38 @@ namespace sparrow_ipc
     {
         std::vector<flatbuffers::Offset<org::apache::arrow::flatbuf::Field>> children_vec;
         children_vec.reserve(arrow_schema.n_children);
-        for (int i = 0; i < arrow_schema.n_children; ++i)
+        for (size_t i = 0; i < arrow_schema.n_children; ++i)
         {
             if (arrow_schema.children[i] == nullptr)
             {
-                throw std::invalid_argument("ArrowSchema has null child at index " + std::to_string(i));
+                throw std::invalid_argument("ArrowSchema has null child pointer");
             }
-            flatbuffers::Offset<org::apache::arrow::flatbuf::Field> field = create_field(
-                builder,
-                *(arrow_schema.children[i])
-            );
+            const auto& child = *arrow_schema.children[i];
+            flatbuffers::Offset<org::apache::arrow::flatbuf::Field> field = create_field(builder, child);
             children_vec.emplace_back(field);
         }
         return children_vec.empty() ? 0 : builder.CreateVector(children_vec);
     }
 
-    flatbuffers::FlatBufferBuilder get_schema_message_builder(const ArrowSchema& arrow_schema)
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<org::apache::arrow::flatbuf::Field>>>
+    create_children(flatbuffers::FlatBufferBuilder& builder, sparrow::record_batch::column_range columns)
+    {
+        std::vector<flatbuffers::Offset<org::apache::arrow::flatbuf::Field>> children_vec;
+        children_vec.reserve(columns.size());
+        for (const auto& column : columns)
+        {
+            const auto& arrow_schema = sparrow::detail::array_access::get_arrow_proxy(column).schema();
+            flatbuffers::Offset<org::apache::arrow::flatbuf::Field> field = create_field(builder, arrow_schema);
+            children_vec.emplace_back(field);
+        }
+        return children_vec.empty() ? 0 : builder.CreateVector(children_vec);
+    }
+
+    flatbuffers::FlatBufferBuilder get_schema_message_builder(const sparrow::record_batch& record_batch)
     {
         flatbuffers::FlatBufferBuilder schema_builder;
-        const auto fields_vec = create_children(schema_builder, arrow_schema);
+        record_batch.columns();
+        const auto fields_vec = create_children(schema_builder, record_batch.columns());
         const auto schema_offset = org::apache::arrow::flatbuf::CreateSchema(
             schema_builder,
             org::apache::arrow::flatbuf::Endianness::Little,  // TODO: make configurable
@@ -92,12 +105,11 @@ namespace sparrow_ipc
         return schema_builder;
     }
 
-    std::vector<uint8_t> serialize_schema_message(const ArrowSchema& arrow_schema)
+    std::vector<uint8_t> serialize_schema_message(const sparrow::record_batch& record_batch)
     {
         std::vector<uint8_t> schema_buffer;
-
         schema_buffer.insert(schema_buffer.end(), continuation.begin(), continuation.end());
-        flatbuffers::FlatBufferBuilder schema_builder = get_schema_message_builder(arrow_schema);
+        flatbuffers::FlatBufferBuilder schema_builder = get_schema_message_builder(record_batch);
         const flatbuffers::uoffset_t schema_len = schema_builder.GetSize();
         schema_buffer.reserve(schema_buffer.size() + sizeof(uint32_t) + schema_len);
         // Write the 4-byte length prefix after the continuation bytes
@@ -162,8 +174,7 @@ namespace sparrow_ipc
         }
         for (const auto& child : arrow_proxy.children())
         {
-            const auto& child_arrow_proxy = sparrow::detail::array_access::get_arrow_proxy(child);
-            fill_buffers(child_arrow_proxy, flatbuf_buffers, offset);
+            fill_buffers(child, flatbuf_buffers, offset);
         }
     }
 
@@ -190,8 +201,7 @@ namespace sparrow_ipc
         }
         for (const auto& child : arrow_proxy.children())
         {
-            const auto& child_arrow_proxy = sparrow::detail::array_access::get_arrow_proxy(child);
-            fill_body(child_arrow_proxy, body);
+            fill_body(child, body);
         }
     }
 
@@ -215,8 +225,7 @@ namespace sparrow_ipc
         }
         for (const auto& child : arrow_proxy.children())
         {
-            const auto& child_arrow_proxy = sparrow::detail::array_access::get_arrow_proxy(child);
-            total_size += calculate_body_size(child_arrow_proxy);
+            total_size += calculate_body_size(child);
         }
         return total_size;
     }
@@ -270,14 +279,11 @@ namespace sparrow_ipc
     {
         std::vector<org::apache::arrow::flatbuf::FieldNode> nodes = create_fieldnodes(record_batch);
         std::vector<org::apache::arrow::flatbuf::Buffer> flatbuf_buffers = get_buffers(record_batch);
-        flatbuffers::FlatBufferBuilder record_batch_builder;
-        ::flatbuffers::Offset<org::apache::arrow::flatbuf::RecordBatch>
-            record_batch_offset = org::apache::arrow::flatbuf::CreateRecordBatchDirect(
-                record_batch_builder,
-                static_cast<int64_t>(record_batch.nb_rows()),
-                &nodes,
-                &flatbuf_buffers
-            );
+        flatbuffers::FlatBufferBuilder record_batch_builder = get_record_batch_message_builder(
+            record_batch,
+            nodes,
+            flatbuf_buffers
+        );
         std::vector<uint8_t> output;
         output.insert(output.end(), continuation.begin(), continuation.end());
         const flatbuffers::uoffset_t record_batch_len = record_batch_builder.GetSize();
@@ -302,40 +308,4 @@ namespace sparrow_ipc
         return output;
     }
 
-    template <std::ranges::input_range R>
-        requires std::same_as<std::ranges::range_value_t<R>, sparrow::record_batch>
-    std::vector<uint8_t> serialize_record_batches(const R& record_batches)
-    {
-        std::vector<uint8_t> output;
-        for (const auto& record_batch : record_batches)
-        {
-            const auto rb_serialized = serialize_record_batch(record_batch);
-            output.insert(
-                output.end(),
-                std::make_move_iterator(rb_serialized.begin()),
-                std::make_move_iterator(rb_serialized.end())
-            );
-        }
-        return output;
-    }
-
-    template <std::ranges::input_range R>
-        requires std::same_as<std::ranges::range_value_t<R>, sparrow::record_batch>
-    std::vector<uint8_t> serialize(const R& record_batches)
-    {
-        if (check_record_batches_consistency(record_batches))
-        {
-            throw std::invalid_argument(
-                "All record batches must have the same schema to be serialized together."
-            );
-        }
-        std::vector<uint8_t> serialized_schema = serialize_schema_message(record_batches[0].schema());
-        std::vector<uint8_t> serialized_record_batches = serialize_record_batches(record_batches);
-        serialized_schema.insert(
-            serialized_schema.end(),
-            std::make_move_iterator(serialized_record_batches.begin()),
-            std::make_move_iterator(serialized_record_batches.end())
-        );
-        return serialized_schema;
-    }
 }

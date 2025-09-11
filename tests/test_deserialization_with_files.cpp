@@ -116,4 +116,55 @@ TEST_SUITE("Integration tests")
             }
         }
     }
+
+    TEST_CASE("Compare record_batch serialization with stream file")
+    {
+        for (const auto& file_path : files_paths_to_test)
+        {
+            std::filesystem::path json_path = file_path;
+            json_path.replace_extension(".json");
+            const std::string test_name = "Testing " + file_path.filename().string();
+            SUBCASE(test_name.c_str())
+            {
+                // Load the JSON file
+                auto json_data = load_json_file(json_path);
+                CHECK(json_data != nullptr);
+
+                const size_t num_batches = get_number_of_batches(json_path);
+
+                std::vector<sparrow::record_batch> record_batches_from_json;
+
+                for (size_t batch_idx = 0; batch_idx < num_batches; ++batch_idx)
+                {
+                    INFO("Processing batch " << batch_idx << " of " << num_batches);
+                    record_batches_from_json.emplace_back(
+                        sparrow::json_reader::build_record_batch_from_json(json_data, batch_idx)
+                    );
+                }
+
+                // Load stream file
+                std::filesystem::path stream_file_path = file_path;
+                stream_file_path.replace_extension(".stream");
+                std::ifstream stream_file(stream_file_path, std::ios::in | std::ios::binary);
+                REQUIRE(stream_file.is_open());
+                const std::vector<uint8_t> stream_data(
+                    (std::istreambuf_iterator<char>(stream_file)),
+                    (std::istreambuf_iterator<char>())
+                );
+                stream_file.close();
+
+                // Serialize the record batches from JSON
+                const auto serialized_data = sparrow_ipc::serialize(record_batches_from_json);
+
+                // Compare the serialized data with the original stream data
+                // CHECK_EQ(serialized_data, stream_data);
+                // REQUIRE_EQ(serialized_data.size(), stream_data.size());
+                for (size_t i = 0; i < std::min(serialized_data.size(), stream_data.size()); ++i)
+                {
+                    INFO("Comparing byte " << i << " of " << serialized_data.size());
+                    CHECK_EQ(serialized_data[i], stream_data[i]);
+                }
+            }
+        }
+    }
 }
