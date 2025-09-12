@@ -33,11 +33,9 @@ namespace sparrow_ipc
         flatbuffers::Offset<flatbuffers::String> fb_name_offset = (arrow_schema.name == nullptr)
                                                                       ? 0
                                                                       : builder.CreateString(arrow_schema.name);
-
         const auto [type_enum, type_offset] = utils::get_flatbuffer_type(builder, arrow_schema.format);
         auto fb_metadata_offset = create_metadata(builder, arrow_schema);
         const auto children = create_children(builder, arrow_schema);
-
         const auto fb_field = org::apache::arrow::flatbuf::CreateField(
             builder,
             fb_name_offset,
@@ -251,6 +249,7 @@ namespace sparrow_ipc
     )
     {
         flatbuffers::FlatBufferBuilder record_batch_builder;
+
         auto nodes_offset = record_batch_builder.CreateVectorOfStructs(nodes);
         auto buffers_offset = record_batch_builder.CreateVectorOfStructs(buffers);
         const auto record_batch_offset = org::apache::arrow::flatbuf::CreateRecordBatch(

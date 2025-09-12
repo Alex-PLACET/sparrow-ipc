@@ -8,6 +8,7 @@
 
 #include "Message_generated.h"
 #include "sparrow_ipc/config/config.hpp"
+#include "sparrow_ipc/magic_values.hpp"
 #include "sparrow_ipc/utils.hpp"
 
 namespace sparrow_ipc
@@ -99,7 +100,7 @@ namespace sparrow_ipc
         {
             return {};
         }
-        if (utils::check_record_batches_consistency(record_batches))
+        if (!utils::check_record_batches_consistency(record_batches))
         {
             throw std::invalid_argument(
                 "All record batches must have the same schema to be serialized together."
@@ -112,6 +113,8 @@ namespace sparrow_ipc
             std::make_move_iterator(serialized_record_batches.begin()),
             std::make_move_iterator(serialized_record_batches.end())
         );
+        // End of stream message
+        serialized_schema.insert(serialized_schema.end(), end_of_stream.begin(), end_of_stream.end());
         return serialized_schema;
     }
 }

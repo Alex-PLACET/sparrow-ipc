@@ -29,13 +29,12 @@ namespace sparrow_ipc::utils
             return true;
         }
         const sparrow::record_batch& first_rb = record_batches[0];
+        const size_t first_rb_nb_rows = first_rb.nb_rows();
+        const size_t first_rb_nb_columns = first_rb.nb_columns();
         for (const sparrow::record_batch& rb : record_batches)
         {
-            if (rb.nb_columns() != first_rb.nb_columns())
-            {
-                return false;
-            }
-            if (rb.nb_rows() != first_rb.nb_rows())
+            const auto rb_nb_columns = rb.nb_columns();
+            if (rb_nb_columns != first_rb_nb_columns)
             {
                 return false;
             }
@@ -43,7 +42,9 @@ namespace sparrow_ipc::utils
             {
                 const sparrow::array& arr = rb.get_column(col_idx);
                 const sparrow::array& first_arr = first_rb.get_column(col_idx);
-                if (arr.data_type() != first_arr.data_type())
+                const auto arr_data_type = arr.data_type();
+                const auto first_arr_data_type = first_arr.data_type();
+                if (arr_data_type != first_arr_data_type)
                 {
                     return false;
                 }
