@@ -123,7 +123,7 @@ if(NOT TARGET lz4::lz4)
     add_library(lz4::lz4 ALIAS lz4)
 endif()
 
-if(SPARROW_IPC_BUILD_TESTS)
+if(${SPARROW_IPC_BUILD_TESTS} OR ${SPARROW_IPC_BUILD_INTEGRATION_TESTS})
     find_package_or_fetch(
         PACKAGE_NAME doctest
         GIT_REPOSITORY https://github.com/doctest/doctest.git
