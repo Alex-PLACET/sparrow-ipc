@@ -3,6 +3,7 @@
 #include <sparrow/types/data_type.hpp>
 
 #include "sparrow_ipc/deserialize_fixedsizebinary_array.hpp"
+#include "sparrow_ipc/deserialize_interval_array.hpp"
 #include "sparrow_ipc/deserialize_primitive_array.hpp"
 #include "sparrow_ipc/deserialize_variable_size_binary_array.hpp"
 #include "sparrow_ipc/magic_values.hpp"
@@ -191,6 +192,50 @@ namespace sparrow_ipc
                         )
                     );
                     break;
+                case org::apache::arrow::flatbuf::Type::Interval:
+                {
+                    const auto interval_type = field->type_as_Interval();
+                    org::apache::arrow::flatbuf::IntervalUnit interval_unit = interval_type->unit();
+                    switch (interval_unit)
+                    {
+                        case org::apache::arrow::flatbuf::IntervalUnit::YEAR_MONTH:
+                            arrays.emplace_back(
+                                deserialize_non_owning_interval_array<sparrow::chrono::months>(
+                                    record_batch,
+                                    encapsulated_message.body(),
+                                    name,
+                                    metadata,
+                                    buffer_index
+                                )
+                            );
+                            break;
+                        case org::apache::arrow::flatbuf::IntervalUnit::DAY_TIME:
+                            arrays.emplace_back(
+                                deserialize_non_owning_interval_array<sparrow::days_time_interval>(
+                                    record_batch,
+                                    encapsulated_message.body(),
+                                    name,
+                                    metadata,
+                                    buffer_index
+                                )
+                            );
+                            break;
+                        case org::apache::arrow::flatbuf::IntervalUnit::MONTH_DAY_NANO:
+                            arrays.emplace_back(
+                                deserialize_non_owning_interval_array<sparrow::month_day_nanoseconds_interval>(
+                                    record_batch,
+                                    encapsulated_message.body(),
+                                    name,
+                                    metadata,
+                                    buffer_index
+                                )
+                            );
+                            break;
+                        default:
+                            throw std::runtime_error("Unsupported interval unit.");
+                    }
+                }
+                break;
                 default:
                     throw std::runtime_error("Unsupported type.");
             }
@@ -208,7 +253,8 @@ namespace sparrow_ipc
         std::vector<std::optional<std::vector<sparrow::metadata_pair>>> fields_metadata;
         do
         {
-            // Check for end-of-stream marker here as data could contain only that (if no record batches present/written)
+            // Check for end-of-stream marker here as data could contain only that (if no record batches
+            // present/written)
             if (data.size() >= 8 && is_end_of_stream(data.subspan(0, 8)))
             {
                 break;
@@ -234,11 +280,12 @@ namespace sparrow_ipc
 
                     for (const auto field : *(schema->fields()))
                     {
-                        if(field != nullptr && field->name() != nullptr)
+                        if (field != nullptr && field->name() != nullptr)
                         {
-                           field_names.emplace_back(field->name()->str());
+                            field_names.emplace_back(field->name()->str());
                         }
-                        else {
+                        else
+                        {
                             field_names.emplace_back("_unnamed_");
                         }
                         fields_nullable.push_back(field->nullable());
@@ -269,7 +316,8 @@ namespace sparrow_ipc
                         encapsulated_message,
                         fields_metadata
                     );
-                    auto names_copy = field_names; // TODO: Remove when issue with the to_vector of record_batch is fixed
+                    auto names_copy = field_names;  // TODO: Remove when issue with the to_vector of
+                                                    // record_batch is fixed
                     sparrow::record_batch sp_record_batch(std::move(names_copy), std::move(arrays));
                     record_batches.emplace_back(std::move(sp_record_batch));
                 }
