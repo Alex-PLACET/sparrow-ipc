@@ -13,39 +13,6 @@
 namespace sparrow_ipc
 {
     /**
-     * @brief Serializes a record batch schema into a binary message format.
-     *
-     * This function creates a serialized schema message by combining continuation bytes,
-     * a length prefix, the flatbuffer schema data, and padding to ensure 8-byte alignment.
-     * The resulting format follows the Arrow IPC specification for schema messages.
-     *
-     * @param record_batch The record batch containing the schema to be serialized
-     * @param stream The output stream where the serialized schema message will be written
-     */
-    SPARROW_IPC_API void
-    serialize_schema_message(const sparrow::record_batch& record_batch, any_output_stream& stream);
-
-    /**
-     * @brief Serializes a record batch into a binary format following the Arrow IPC specification.
-     *
-     * This function converts a sparrow record batch into a serialized byte vector that includes:
-     * - A continuation marker at the beginning
-     * - The record batch metadata length (4 bytes)
-     * - The FlatBuffer-encoded record batch metadata containing field nodes and buffer information
-     * - Padding to ensure 8-byte alignment
-     * - The actual data body containing the record batch buffers
-     *
-     * The serialization follows the Arrow IPC stream format where each record batch message
-     * consists of a metadata section followed by a body section containing the actual data.
-     *
-     * @param record_batch The sparrow record batch to be serialized
-     * @param stream The output stream where the serialized record batch will be written
-     * @param compression The compression type to use when serializing
-     */
-    SPARROW_IPC_API void
-    serialize_record_batch(const sparrow::record_batch& record_batch, any_output_stream& stream, std::optional<CompressionType> compression);
-
-    /**
      * @brief Calculates the total serialized size of a schema message.
      *
      * This function computes the complete size that would be produced by serialize_schema_message(),
