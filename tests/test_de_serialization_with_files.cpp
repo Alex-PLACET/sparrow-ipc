@@ -22,30 +22,33 @@ const std::filesystem::path arrow_testing_data_dir = ARROW_TESTING_DATA_DIR;
 const std::filesystem::path tests_resources_files_path = arrow_testing_data_dir / "data" / "arrow-ipc-stream"
                                                          / "integration" / "cpp-21.0.0";
 
-const std::filesystem::path tests_resources_files_path_with_compression = arrow_testing_data_dir / "data" / "arrow-ipc-stream"
-                                                         / "integration" / "2.0.0-compression";
+const std::filesystem::path tests_resources_files_path_with_compression = arrow_testing_data_dir / "data"
+                                                                          / "arrow-ipc-stream" / "integration"
+                                                                          / "2.0.0-compression";
 
 const std::vector<std::filesystem::path> files_paths_to_test = {
-    tests_resources_files_path / "generated_primitive",
-    tests_resources_files_path / "generated_primitive_zerolength",
-    tests_resources_files_path / "generated_primitive_no_batches",
-    tests_resources_files_path / "generated_binary",
-    tests_resources_files_path / "generated_large_binary",
-    tests_resources_files_path / "generated_binary_zerolength",
     tests_resources_files_path / "generated_binary_no_batches",
+    tests_resources_files_path / "generated_binary_zerolength",
+    tests_resources_files_path / "generated_binary",
+    tests_resources_files_path / "generated_datetime",
+    tests_resources_files_path / "generated_interval_mdn",
     tests_resources_files_path / "generated_interval",
-    tests_resources_files_path / "generated_null",
+    tests_resources_files_path / "generated_large_binary",
     tests_resources_files_path / "generated_null_trivial",
+    tests_resources_files_path / "generated_null",
+    tests_resources_files_path / "generated_primitive_no_batches",
+    tests_resources_files_path / "generated_primitive_zerolength",
+    tests_resources_files_path / "generated_primitive",
 };
 
 const std::vector<std::filesystem::path> files_paths_to_test_with_lz4_compression = {
     tests_resources_files_path_with_compression / "generated_lz4",
-    tests_resources_files_path_with_compression/ "generated_uncompressible_lz4",
+    tests_resources_files_path_with_compression / "generated_uncompressible_lz4",
 };
 
 const std::vector<std::filesystem::path> files_paths_to_test_with_zstd_compression = {
     tests_resources_files_path_with_compression / "generated_zstd",
-    tests_resources_files_path_with_compression/ "generated_uncompressible_zstd",
+    tests_resources_files_path_with_compression / "generated_uncompressible_zstd",
 };
 
 size_t get_number_of_batches(const std::filesystem::path& json_path)
@@ -96,15 +99,27 @@ void compare_record_batches(
     }
 }
 
-struct Lz4CompressionParams {
+struct Lz4CompressionParams
+{
     static constexpr sparrow_ipc::CompressionType compression_type = sparrow_ipc::CompressionType::LZ4_FRAME;
-    static const std::vector<std::filesystem::path>& files() { return files_paths_to_test_with_lz4_compression; }
+
+    static const std::vector<std::filesystem::path>& files()
+    {
+        return files_paths_to_test_with_lz4_compression;
+    }
+
     static constexpr const char* name = "LZ4";
 };
 
-struct ZstdCompressionParams {
+struct ZstdCompressionParams
+{
     static constexpr sparrow_ipc::CompressionType compression_type = sparrow_ipc::CompressionType::ZSTD;
-    static const std::vector<std::filesystem::path>& files() { return files_paths_to_test_with_zstd_compression; }
+
+    static const std::vector<std::filesystem::path>& files()
+    {
+        return files_paths_to_test_with_zstd_compression;
+    }
+
     static constexpr const char* name = "ZSTD";
 };
 
@@ -206,13 +221,19 @@ TEST_SUITE("Integration tests")
         }
     }
 
-    TEST_CASE_TEMPLATE("Compare record_batch serialization with stream file using compression", T, Lz4CompressionParams, ZstdCompressionParams)
+    TEST_CASE_TEMPLATE(
+        "Compare record_batch serialization with stream file using compression",
+        T,
+        Lz4CompressionParams,
+        ZstdCompressionParams
+    )
     {
         for (const auto& file_path : T::files())
         {
             std::filesystem::path json_path = file_path;
             json_path.replace_extension(".json");
-            const std::string test_name = "Testing " + std::string(T::name) + " compression with " + file_path.filename().string();
+            const std::string test_name = "Testing " + std::string(T::name) + " compression with "
+                                          + file_path.filename().string();
             SUBCASE(test_name.c_str())
             {
                 // Load the JSON file
@@ -257,7 +278,12 @@ TEST_SUITE("Integration tests")
         }
     }
 
-    TEST_CASE_TEMPLATE("Round trip of classic test files serialization/deserialization using compression", T, Lz4CompressionParams, ZstdCompressionParams)
+    TEST_CASE_TEMPLATE(
+        "Round trip of classic test files serialization/deserialization using compression",
+        T,
+        Lz4CompressionParams,
+        ZstdCompressionParams
+    )
     {
         for (const auto& file_path : files_paths_to_test)
         {

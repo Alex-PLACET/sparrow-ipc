@@ -1,0 +1,33 @@
+#pragma once
+
+#include <optional>
+#include <vector>
+
+#include <sparrow/arrow_interface/arrow_array_schema_proxy.hpp>
+#include <sparrow/date_array.hpp>
+
+#include "Message_generated.h"
+#include "sparrow_ipc/deserialize_array_impl.hpp"
+
+namespace sparrow_ipc
+{
+    template <sparrow::time_type T>
+    [[nodiscard]] sparrow::time_array<T> deserialize_non_owning_date_array(
+        const org::apache::arrow::flatbuf::RecordBatch& record_batch,
+        std::span<const uint8_t> body,
+        std::string_view name,
+        const std::optional<std::vector<sparrow::metadata_pair>>& metadata,
+        bool nullable,
+        size_t& buffer_index
+    )
+    {
+        return detail::deserialize_non_owning_simple_array<sparrow::time_array, T>(
+            record_batch,
+            body,
+            name,
+            metadata,
+            nullable,
+            buffer_index
+        );
+    }
+}
