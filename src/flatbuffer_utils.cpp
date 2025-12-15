@@ -1,5 +1,6 @@
 #include <numeric>
 #include <string>
+#include <string_view>
 
 #include "compression_impl.hpp"
 #include "sparrow_ipc/magic_values.hpp"
@@ -7,6 +8,16 @@
 
 namespace sparrow_ipc
 {
+    std::string_view get_timezone(std::string_view format_str)
+    {
+        constexpr std::string_view prefix = "tss:";
+        if (format_str.substr(0, prefix.size()) != prefix)
+        {
+            return {};
+        }
+        return format_str.substr(prefix.size());
+    }
+
     std::pair<org::apache::arrow::flatbuf::Type, flatbuffers::Offset<void>>
     get_flatbuffer_type(flatbuffers::FlatBufferBuilder& builder, std::string_view format_str)
     {
@@ -135,33 +146,41 @@ namespace sparrow_ipc
             }
             case sparrow::data_type::TIMESTAMP_SECONDS:
             {
+                const std::string_view timezone_str = get_timezone(format_str);
                 const auto timestamp_type = org::apache::arrow::flatbuf::CreateTimestamp(
                     builder,
-                    org::apache::arrow::flatbuf::TimeUnit::SECOND
+                    org::apache::arrow::flatbuf::TimeUnit::SECOND,
+                    builder.CreateString(timezone_str)
                 );
                 return {org::apache::arrow::flatbuf::Type::Timestamp, timestamp_type.Union()};
             }
             case sparrow::data_type::TIMESTAMP_MILLISECONDS:
             {
+                const std::string_view timezone_str = get_timezone(format_str);
                 const auto timestamp_type = org::apache::arrow::flatbuf::CreateTimestamp(
                     builder,
-                    org::apache::arrow::flatbuf::TimeUnit::MILLISECOND
+                    org::apache::arrow::flatbuf::TimeUnit::MILLISECOND,
+                    builder.CreateString(timezone_str)
                 );
                 return {org::apache::arrow::flatbuf::Type::Timestamp, timestamp_type.Union()};
             }
             case sparrow::data_type::TIMESTAMP_MICROSECONDS:
             {
+                const std::string_view timezone_str = get_timezone(format_str);
                 const auto timestamp_type = org::apache::arrow::flatbuf::CreateTimestamp(
                     builder,
-                    org::apache::arrow::flatbuf::TimeUnit::MICROSECOND
+                    org::apache::arrow::flatbuf::TimeUnit::MICROSECOND,
+                    builder.CreateString(timezone_str)
                 );
                 return {org::apache::arrow::flatbuf::Type::Timestamp, timestamp_type.Union()};
             }
             case sparrow::data_type::TIMESTAMP_NANOSECONDS:
             {
+                const std::string_view timezone_str = get_timezone(format_str);
                 const auto timestamp_type = org::apache::arrow::flatbuf::CreateTimestamp(
                     builder,
-                    org::apache::arrow::flatbuf::TimeUnit::NANOSECOND
+                    org::apache::arrow::flatbuf::TimeUnit::NANOSECOND,
+                    builder.CreateString(timezone_str)
                 );
                 return {org::apache::arrow::flatbuf::Type::Timestamp, timestamp_type.Union()};
             }
