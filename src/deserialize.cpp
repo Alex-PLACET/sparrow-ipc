@@ -28,28 +28,51 @@ namespace sparrow_ipc
 
         // Helper to deserialize integer arrays based on bit width and signedness
         template <typename Lambda>
-        void deserialize_integer_by_width(std::vector<sparrow::array>& arrays, int32_t bit_width, bool is_signed, Lambda&& deserialize_fn)
+        void deserialize_integer_by_width(
+            std::vector<sparrow::array>& arrays,
+            int32_t bit_width,
+            bool is_signed,
+            Lambda&& deserialize_fn
+        )
         {
             if (is_signed)
             {
                 switch (bit_width)
                 {
-                    case BIT_WIDTH_8:  arrays.emplace_back(deserialize_fn.template operator()<int8_t>()); break;
-                    case BIT_WIDTH_16: arrays.emplace_back(deserialize_fn.template operator()<int16_t>()); break;
-                    case BIT_WIDTH_32: arrays.emplace_back(deserialize_fn.template operator()<int32_t>()); break;
-                    case BIT_WIDTH_64: arrays.emplace_back(deserialize_fn.template operator()<int64_t>()); break;
-                    default: throw std::runtime_error("Unsupported integer bit width: " + std::to_string(bit_width));
+                    case BIT_WIDTH_8:
+                        arrays.emplace_back(deserialize_fn.template operator()<int8_t>());
+                        break;
+                    case BIT_WIDTH_16:
+                        arrays.emplace_back(deserialize_fn.template operator()<int16_t>());
+                        break;
+                    case BIT_WIDTH_32:
+                        arrays.emplace_back(deserialize_fn.template operator()<int32_t>());
+                        break;
+                    case BIT_WIDTH_64:
+                        arrays.emplace_back(deserialize_fn.template operator()<int64_t>());
+                        break;
+                    default:
+                        throw std::runtime_error("Unsupported integer bit width: " + std::to_string(bit_width));
                 }
             }
             else
             {
                 switch (bit_width)
                 {
-                    case BIT_WIDTH_8:  arrays.emplace_back(deserialize_fn.template operator()<uint8_t>()); break;
-                    case BIT_WIDTH_16: arrays.emplace_back(deserialize_fn.template operator()<uint16_t>()); break;
-                    case BIT_WIDTH_32: arrays.emplace_back(deserialize_fn.template operator()<uint32_t>()); break;
-                    case BIT_WIDTH_64: arrays.emplace_back(deserialize_fn.template operator()<uint64_t>()); break;
-                    default: throw std::runtime_error("Unsupported integer bit width: " + std::to_string(bit_width));
+                    case BIT_WIDTH_8:
+                        arrays.emplace_back(deserialize_fn.template operator()<uint8_t>());
+                        break;
+                    case BIT_WIDTH_16:
+                        arrays.emplace_back(deserialize_fn.template operator()<uint16_t>());
+                        break;
+                    case BIT_WIDTH_32:
+                        arrays.emplace_back(deserialize_fn.template operator()<uint32_t>());
+                        break;
+                    case BIT_WIDTH_64:
+                        arrays.emplace_back(deserialize_fn.template operator()<uint64_t>());
+                        break;
+                    default:
+                        throw std::runtime_error("Unsupported integer bit width: " + std::to_string(bit_width));
                 }
             }
         }
@@ -77,7 +100,9 @@ namespace sparrow_ipc
                     arrays.emplace_back(deserialize_fn.template operator()<sparrow::timestamp_nanosecond>());
                     break;
                 default:
-                    throw std::runtime_error("Unsupported timestamp time unit: " + std::to_string(static_cast<int>(time_unit)));
+                    throw std::runtime_error(
+                        "Unsupported timestamp time unit: " + std::to_string(static_cast<int>(time_unit))
+                    );
             }
         }
 
@@ -104,7 +129,9 @@ namespace sparrow_ipc
                     arrays.emplace_back(deserialize_fn.template operator()<sparrow::chrono::time_nanoseconds>());
                     break;
                 default:
-                    throw std::runtime_error("Unsupported time time unit: " + std::to_string(static_cast<int>(time_unit)));
+                    throw std::runtime_error(
+                        "Unsupported time time unit: " + std::to_string(static_cast<int>(time_unit))
+                    );
             }
         }
     }
@@ -256,19 +283,27 @@ namespace sparrow_ipc
                     switch (field_type)
                     {
                         case org::apache::arrow::flatbuf::Type::Binary:
-                            arrays.emplace_back(deserialize_variable_binary.template operator()<sparrow::binary_array>());
+                            arrays.emplace_back(
+                                deserialize_variable_binary.template operator()<sparrow::binary_array>()
+                            );
                             break;
                         case org::apache::arrow::flatbuf::Type::LargeBinary:
-                            arrays.emplace_back(deserialize_variable_binary.template operator()<sparrow::big_binary_array>());
+                            arrays.emplace_back(
+                                deserialize_variable_binary.template operator()<sparrow::big_binary_array>()
+                            );
                             break;
                         case org::apache::arrow::flatbuf::Type::Utf8:
-                            arrays.emplace_back(deserialize_variable_binary.template operator()<sparrow::string_array>());
+                            arrays.emplace_back(
+                                deserialize_variable_binary.template operator()<sparrow::string_array>()
+                            );
                             break;
                         case org::apache::arrow::flatbuf::Type::LargeUtf8:
-                            arrays.emplace_back(deserialize_variable_binary.template operator()<sparrow::big_string_array>());
+                            arrays.emplace_back(
+                                deserialize_variable_binary.template operator()<sparrow::big_string_array>()
+                            );
                             break;
                         default:
-                            break; // Should never reach here due to outer switch
+                            break;  // Should never reach here due to outer switch
                     }
                     break;
                 }
@@ -334,24 +369,70 @@ namespace sparrow_ipc
                 case org::apache::arrow::flatbuf::Type::Timestamp:
                 {
                     const auto* timestamp_type = field->type_as_Timestamp();
-                    const auto deserialize_timestamp_fn = [&]<typename T>()
+                    const auto* timezone = timestamp_type->timezone();
+                    const auto time_unit = timestamp_type->unit();
+                    
+                    if (timezone == nullptr)
                     {
-                        return deserialize_non_owning_timestamp<T>(
-                            record_batch,
-                            encapsulated_message.body(),
-                            name,
-                            metadata,
-                            nullable,
-                            buffer_index
-                        );
-                    };
-                    deserialize_timestamp_by_unit(arrays, timestamp_type->unit(), deserialize_timestamp_fn);
+                        // Timestamp without timezone
+                        const auto deserialize_fn = [&]<typename T>()
+                        {
+                            return deserialize_timestamp_without_timezone<T>(
+                                record_batch,
+                                encapsulated_message.body(),
+                                name,
+                                metadata,
+                                nullable,
+                                buffer_index
+                            );
+                        };
+                        
+                        switch (time_unit)
+                        {
+                            case org::apache::arrow::flatbuf::TimeUnit::SECOND:
+                                arrays.emplace_back(deserialize_fn.template operator()<sparrow::zoned_time_without_timezone_seconds>());
+                                break;
+                            case org::apache::arrow::flatbuf::TimeUnit::MILLISECOND:
+                                arrays.emplace_back(deserialize_fn.template operator()<sparrow::zoned_time_without_timezone_milliseconds>());
+                                break;
+                            case org::apache::arrow::flatbuf::TimeUnit::MICROSECOND:
+                                arrays.emplace_back(deserialize_fn.template operator()<sparrow::zoned_time_without_timezone_microseconds>());
+                                break;
+                            case org::apache::arrow::flatbuf::TimeUnit::NANOSECOND:
+                                arrays.emplace_back(deserialize_fn.template operator()<sparrow::zoned_time_without_timezone_nanoseconds>());
+                                break;
+                            default:
+                                throw std::runtime_error("Unsupported timestamp time unit: " + std::to_string(static_cast<int>(time_unit)));
+                        }
+                    }
+                    else
+                    {
+                        // Timestamp with timezone
+                        const auto deserialize_fn = [&]<typename T>()
+                        {
+                            return deserialize_timestamp_array<sparrow::timestamp_array, T>(
+                                record_batch,
+                                encapsulated_message.body(),
+                                name,
+                                metadata,
+                                nullable,
+                                buffer_index,
+                                *timezone
+                            );
+                        };
+                        
+                        deserialize_timestamp_by_unit(arrays, time_unit, deserialize_fn);
+                    }
                 }
                 break;
                 case org::apache::arrow::flatbuf::Type::Time:
                 {
                     const auto* time_type = field->type_as_Time();
-                    deserialize_time_by_unit(arrays, time_type->unit(), deserialize_non_owning_primitive_array_lambda);
+                    deserialize_time_by_unit(
+                        arrays,
+                        time_type->unit(),
+                        deserialize_non_owning_primitive_array_lambda
+                    );
                 }
                 break;
                 case org::apache::arrow::flatbuf::Type::Date:
