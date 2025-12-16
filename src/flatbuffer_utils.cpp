@@ -8,6 +8,7 @@
 
 namespace sparrow_ipc
 {
+    // format is: tss:%TIMEZONE%
     std::string_view get_timezone(std::string_view format_str)
     {
         constexpr std::string_view prefix = "tss:";

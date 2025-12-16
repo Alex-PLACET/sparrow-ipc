@@ -87,8 +87,9 @@ void compare_record_batches(
             REQUIRE_EQ(column_1.size(), column_2.size());
             CHECK_EQ(record_batches_1[i].names()[y], record_batches_2[i].names()[y]);
             REQUIRE_EQ(column_1.data_type(), column_2.data_type());
-            REQUIRE_EQ(sparrow::detail::array_access::get_arrow_proxy(column_1).format(), 
-                       sparrow::detail::array_access::get_arrow_proxy(column_2).format());
+            const std::string_view format_1 = sparrow::detail::array_access::get_arrow_proxy(column_1).format();
+            const std::string_view format_2 = sparrow::detail::array_access::get_arrow_proxy(column_2).format(); 
+            REQUIRE_EQ(format_1, format_2);
             const auto col_name = column_1.name().value_or("NA");
             for (size_t z = 0; z < column_1.size(); z++)
             {
