@@ -9,6 +9,21 @@
 
 namespace sparrow_ipc
 {
+    namespace details
+    {
+        std::size_t get_nb_buffers_to_process(const std::string_view& format, const std::size_t orig_buffers_size)
+        {
+            // If the array data type is a view type, we should not consider the last buffer (corresponding to the variadic buffer sizes)
+            if (const auto type = sparrow::format_to_data_type(format);
+                type == sparrow::data_type::STRING_VIEW || type == sparrow::data_type::BINARY_VIEW)
+            {
+                auto num_buffers_to_process = (orig_buffers_size > 0) ? orig_buffers_size - 1 : 0;
+                return num_buffers_to_process;
+            }
+            return orig_buffers_size;
+        }
+    }
+
     namespace
     {
         std::pair<org::apache::arrow::flatbuf::Type, flatbuffers::Offset<void>>
@@ -633,27 +648,33 @@ namespace sparrow_ipc
     )
     {
         int64_t total_size = 0;
+        const auto& buffers = arrow_proxy.buffers();
+        auto nb_buffers = details::get_nb_buffers_to_process(arrow_proxy.schema().format, buffers.size());
+
         if (compression.has_value())
         {
             if (!cache)
             {
                 throw std::invalid_argument("Compression type set but no cache is given.");
             }
-            for (const auto& buffer : arrow_proxy.buffers())
-            {
-                total_size += utils::align_to_8(get_compressed_size(
-                    compression.value(),
-                    std::span<const uint8_t>(buffer.data(), buffer.size()),
-                    cache.value().get()
-                ));
-            }
+
+            total_size = sparrow::ranges::accumulate(
+                buffers | std::views::take(nb_buffers), int64_t{0},
+                [&](int64_t acc, const auto& buffer) {
+                    return acc + utils::align_to_8(get_compressed_size(
+                        compression.value(),
+                        std::span<const uint8_t>(buffer.data(), buffer.size()),
+                        cache.value().get()
+                    ));
+                });
         }
         else
         {
-            for (const auto& buffer : arrow_proxy.buffers())
-            {
-                total_size += utils::align_to_8(buffer.size());
-            }
+            total_size = sparrow::ranges::accumulate(
+                buffers | std::views::take(nb_buffers), int64_t{0},
+                [&](int64_t acc, const auto& buffer) {
+                    return acc + utils::align_to_8(buffer.size());
+                });
         }
 
         for (const auto& child : arrow_proxy.children())
@@ -680,11 +701,42 @@ namespace sparrow_ipc
         );
     }
 
-    flatbuffers::FlatBufferBuilder get_record_batch_message_builder(
-        const sparrow::record_batch& record_batch,
-        std::optional<CompressionType> compression,
-        std::optional<std::reference_wrapper<CompressionCache>> cache
-    )
+    namespace
+    {
+        std::vector<int64_t> get_variadic_buffer_counts(const sparrow::record_batch& record_batch)
+        {
+            std::vector<int64_t> counts;
+            for (const auto& column : record_batch.columns())
+            {
+                const auto& proxy = sparrow::detail::array_access::get_arrow_proxy(column);
+                const auto format_str = proxy.schema().format;
+                const auto type = sparrow::format_to_data_type(format_str);
+
+                if (type == sparrow::data_type::BINARY_VIEW || type == sparrow::data_type::STRING_VIEW)
+                {
+                    // n_buffers includes the following buffers: validity buffer, views buffer, data buffers (variadic buffers if present for strings > 12 bytes) and buffer for variadic buffer sizes
+                    int64_t n_buffers = proxy.n_buffers();
+                    // The variable size binary view array should at least contain validity, views and variadic buffers size
+                    if (n_buffers <= 2)
+                    {
+                        throw std::runtime_error(
+                            "Variable size binary view array contains " + std::to_string(n_buffers) + " buffers!"
+                        );
+                    }
+
+                    const auto& sizes_buffer = proxy.buffers().back();
+                    const int64_t num_variadic_data_buffers = sizes_buffer.size() / sizeof(int64_t);
+
+                    counts.push_back(num_variadic_data_buffers);
+                }
+            }
+            return counts;
+        }
+    }
+
+    flatbuffers::FlatBufferBuilder get_record_batch_message_builder(const sparrow::record_batch& record_batch,
+                                                                    std::optional<CompressionType> compression,
+                                                                    std::optional<std::reference_wrapper<CompressionCache>> cache)
     {
         flatbuffers::FlatBufferBuilder record_batch_builder;
         flatbuffers::Offset<org::apache::arrow::flatbuf::BodyCompression> compression_offset = 0;
@@ -704,15 +756,17 @@ namespace sparrow_ipc
         }
         const auto& buffers = compressed_buffers ? *compressed_buffers : get_buffers(record_batch);
         const std::vector<org::apache::arrow::flatbuf::FieldNode> nodes = create_fieldnodes(record_batch);
+        const auto variadic_counts = get_variadic_buffer_counts(record_batch);
         auto nodes_offset = record_batch_builder.CreateVectorOfStructs(nodes);
         auto buffers_offset = record_batch_builder.CreateVectorOfStructs(buffers);
+        auto variadic_counts_offset = record_batch_builder.CreateVector(variadic_counts);
         const auto record_batch_offset = org::apache::arrow::flatbuf::CreateRecordBatch(
             record_batch_builder,
             static_cast<int64_t>(record_batch.nb_rows()),
             nodes_offset,
             buffers_offset,
             compression_offset,
-            0  // TODO :variadic buffer Counts
+            variadic_counts_offset
         );
 
         const int64_t body_size = calculate_body_size(record_batch, compression, cache);
