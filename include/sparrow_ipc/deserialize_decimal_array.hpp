@@ -43,7 +43,7 @@ namespace sparrow_ipc
 
         ArrowSchema schema = make_non_owning_arrow_schema(
             format_str,
-            name.data(),
+            name,
             metadata,
             flags,
             0,
@@ -53,43 +53,50 @@ namespace sparrow_ipc
 
         const auto compression = record_batch.compression();
         std::vector<arrow_array_private_data::optionally_owned_buffer> buffers;
+        constexpr auto nb_buffers = 2;
+        buffers.reserve(nb_buffers);
 
-        auto validity_buffer_span = utils::get_buffer(record_batch, body, buffer_index);
-        auto data_buffer_span = utils::get_buffer(record_batch, body, buffer_index);
-
-        if (compression)
         {
-            buffers.push_back(utils::get_decompressed_buffer(validity_buffer_span, compression));
-            
-            // For decimal types, we need to ensure proper alignment of the decompressed data.
-            // The decompressed buffer itself is aligned, but we need to copy it to ensure
-            // the decimal values (especially int128 and int256) start at a properly aligned address.
-            auto decompressed_data = utils::get_decompressed_buffer(data_buffer_span, compression);
-            std::visit([&buffers](auto&& arg) {
-                using variant_type = std::decay_t<decltype(arg)>;
-                if constexpr (std::is_same_v<variant_type, sparrow::buffer<std::uint8_t>>)
-                {
-                    // Already a buffer, move it
-                    buffers.emplace_back(std::move(arg));
-                }
-                else
-                {
-                    // It's a span, copy to ensure alignment
-                    sparrow::buffer<std::uint8_t> aligned_buffer(arg.begin(), arg.end(), sparrow::buffer<std::uint8_t>::default_allocator());
-                    buffers.emplace_back(std::move(aligned_buffer));
-                }
-            }, std::move(decompressed_data));
-        }
-        else
-        {
-            buffers.emplace_back(validity_buffer_span);
-            sparrow::buffer<std::uint8_t> data_buffer_copy(data_buffer_span.begin(), data_buffer_span.end(), sparrow::buffer<std::uint8_t>::default_allocator());
-            buffers.emplace_back(std::move(data_buffer_copy));
+            auto validity_buffer_span = utils::get_buffer(record_batch, body, buffer_index);
+            auto data_buffer_span = utils::get_buffer(record_batch, body, buffer_index);
+
+            if (compression)
+            {
+                buffers.push_back(utils::get_decompressed_buffer(validity_buffer_span, compression));
+
+                // For decimal types, we need to ensure proper alignment of the decompressed data.
+                // The decompressed buffer itself is aligned, but we need to copy it to ensure
+                // the decimal values (especially int128 and int256) start at a properly aligned address.
+                auto decompressed_data = utils::get_decompressed_buffer(data_buffer_span, compression);
+                std::visit([&buffers](auto&& arg) {
+                    using variant_type = std::decay_t<decltype(arg)>;
+                    if constexpr (std::is_same_v<variant_type, sparrow::buffer<std::uint8_t>>)
+                    {
+                        // Already a buffer, move it
+                        buffers.push_back(std::move(arg));
+                    }
+                    else
+                    {
+                        // It's a span, copy to ensure alignment
+                        sparrow::buffer<std::uint8_t> aligned_buffer(arg.begin(), arg.end(), sparrow::buffer<std::uint8_t>::default_allocator());
+                        buffers.push_back(std::move(aligned_buffer));
+                    }
+                }, std::move(decompressed_data));
+            }
+            else
+            {
+                buffers.push_back(std::move(validity_buffer_span));
+                sparrow::buffer<std::uint8_t> data_buffer_copy(data_buffer_span.begin(), data_buffer_span.end(), sparrow::buffer<std::uint8_t>::default_allocator());
+                buffers.push_back(std::move(data_buffer_copy));
+            }
         }
 
-        const auto [bitmap_ptr, null_count] = utils::get_bitmap_pointer_and_null_count(
-            validity_buffer_span,
-            length
+        const auto null_count = std::visit(
+            [length](const auto& arg) {
+                std::span<const uint8_t> span(arg.data(), arg.size());
+                return utils::get_bitmap_pointer_and_null_count(span, length).second;
+            },
+            buffers[0]
         );
 
         ArrowArray array = make_arrow_array<arrow_array_private_data>(

@@ -2,6 +2,8 @@
 
 #include <stdexcept>
 
+#include <sparrow/map_array.hpp>
+
 #include "sparrow_ipc/deserialize_decimal_array.hpp"
 #include "sparrow_ipc/deserialize_duration_array.hpp"
 #include "sparrow_ipc/deserialize_fixed_size_binary_array.hpp"
@@ -43,6 +45,7 @@ namespace sparrow_ipc
         m_deserializer_map[org::apache::arrow::flatbuf::Type::LargeList] = &deserialize_list<sparrow::big_list_array>;
         m_deserializer_map[org::apache::arrow::flatbuf::Type::FixedSizeList] = &deserialize_fixed_size_list;
         m_deserializer_map[org::apache::arrow::flatbuf::Type::Struct_] = &deserialize_struct;
+        m_deserializer_map[org::apache::arrow::flatbuf::Type::Map] = &deserialize_map;
     }
 
     sparrow::array array_deserializer::deserialize(const org::apache::arrow::flatbuf::RecordBatch& record_batch,
@@ -352,16 +355,17 @@ namespace sparrow_ipc
             const auto compression = record_batch.compression();
             std::vector<arrow_array_private_data::optionally_owned_buffer> buffers;
 
-            std::span<const uint8_t> validity_buffer_span = utils::get_buffer(record_batch, body, buffer_index);
-            const auto [bitmap_ptr, null_count] = utils::get_bitmap_pointer_and_null_count(validity_buffer_span, length);
+            {
+                std::span<const uint8_t> validity_buffer_span = utils::get_buffer(record_batch, body, buffer_index);
 
-            if (compression)
-            {
-                buffers.push_back(utils::get_decompressed_buffer(validity_buffer_span, compression));
-            }
-            else
-            {
-                buffers.emplace_back(validity_buffer_span);
+                if (compression)
+                {
+                    buffers.push_back(utils::get_decompressed_buffer(validity_buffer_span, compression));
+                }
+                else
+                {
+                    buffers.push_back(std::move(validity_buffer_span));
+                }
             }
 
             const auto* child_field = field.children()->Get(0);
@@ -393,6 +397,13 @@ namespace sparrow_ipc
             );
 
             const std::string format = "+w:" + std::to_string(list_size);
+            const auto null_count = std::visit(
+                [length](const auto& arg) {
+                    std::span<const uint8_t> span(arg.data(), arg.size());
+                    return utils::get_bitmap_pointer_and_null_count(span, length).second;
+                },
+                buffers[0]
+            );
 
             auto [child_arrow_array, child_arrow_schema] = sparrow::extract_arrow_structures(std::move(child_array));
 
@@ -400,7 +411,7 @@ namespace sparrow_ipc
             schema_children[0] = new ArrowSchema(std::move(child_arrow_schema));
             ArrowSchema schema = make_non_owning_arrow_schema(
                 format,
-                name.data(),
+                name,
                 metadata,
                 flags,
                 1,
@@ -444,15 +455,16 @@ namespace sparrow_ipc
             const auto compression = record_batch.compression();
             std::vector<arrow_array_private_data::optionally_owned_buffer> buffers;
 
-            std::span<const uint8_t> validity_buffer_span = utils::get_buffer(record_batch, body, buffer_index);
-            const auto [bitmap_ptr, null_count] = utils::get_bitmap_pointer_and_null_count(validity_buffer_span, length);
-            if (compression)
             {
-                buffers.push_back(utils::get_decompressed_buffer(validity_buffer_span, compression));
-            }
-            else
-            {
-                buffers.emplace_back(validity_buffer_span);
+                std::span<const uint8_t> validity_buffer_span = utils::get_buffer(record_batch, body, buffer_index);
+                if (compression)
+                {
+                    buffers.push_back(utils::get_decompressed_buffer(validity_buffer_span, compression));
+                }
+                else
+                {
+                    buffers.push_back(std::move(validity_buffer_span));
+                }
             }
 
             std::vector<sparrow::array> child_arrays;
@@ -500,12 +512,20 @@ namespace sparrow_ipc
 
             ArrowSchema schema = make_non_owning_arrow_schema(
                 format,
-                name.data(),
+                name,
                 metadata,
                 flags,
                 n_child_arrays,
                 schema_children,
                 nullptr
+            );
+
+            const auto null_count = std::visit(
+                [length](const auto& arg) {
+                    std::span<const uint8_t> span(arg.data(), arg.size());
+                    return utils::get_bitmap_pointer_and_null_count(span, length).second;
+                },
+                buffers[0]
             );
 
             ArrowArray array = make_arrow_array<arrow_array_private_data>(
@@ -554,4 +574,29 @@ namespace sparrow_ipc
             record_batch, body, length, name, metadata, nullable, buffer_index, variadic_counts_idx, field
         ));
     }
+
+    sparrow::array array_deserializer::deserialize_map(
+        const org::apache::arrow::flatbuf::RecordBatch& record_batch,
+        const std::span<const uint8_t>& body,
+        const int64_t length,
+        const std::string& name,
+        const std::optional<std::vector<sparrow::metadata_pair>>& metadata,
+        bool nullable,
+        size_t& buffer_index,
+        size_t& variadic_counts_idx,
+        const org::apache::arrow::flatbuf::Field& field)
+    {
+        // TODO handle the keyssorted in flags (needs a custom test) when true
+        return sparrow::array(array_deserializer::deserialize_list_array<sparrow::map_array>(
+            record_batch,
+            body,
+            length,
+            name,
+            metadata,
+            nullable,
+            buffer_index,
+            variadic_counts_idx,
+            field
+        ));
+}
 }
