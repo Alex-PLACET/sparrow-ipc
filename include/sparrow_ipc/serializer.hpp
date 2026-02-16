@@ -5,6 +5,7 @@
 
 #include "sparrow_ipc/any_output_stream.hpp"
 #include "sparrow_ipc/compression.hpp"
+#include "sparrow_ipc/dictionary_tracker.hpp"
 #include "sparrow_ipc/serialize.hpp"
 #include "sparrow_ipc/serialize_utils.hpp"
 
@@ -126,6 +127,22 @@ namespace sparrow_ipc
                 {
                     throw std::invalid_argument("Record batch schema does not match serializer schema");
                 }
+                
+                // Extract and emit dictionaries before the record batch
+                auto dictionaries = m_dict_tracker.extract_dictionaries_from_batch(rb);
+                for (const auto& dict_info : dictionaries)
+                {
+                    serialize_dictionary_batch(
+                        dict_info.id,
+                        dict_info.data,
+                        dict_info.is_delta,
+                        m_stream,
+                        m_compression,
+                        compressed_buffers_cache
+                    );
+                    m_dict_tracker.mark_emitted(dict_info.id, dict_info.is_delta);
+                }
+                
                 serialize_record_batch(rb, m_stream, m_compression, compressed_buffers_cache);
             }
         }
@@ -218,6 +235,7 @@ namespace sparrow_ipc
         any_output_stream m_stream;
         bool m_ended{false};
         std::optional<CompressionType> m_compression;
+        dictionary_tracker m_dict_tracker;
     };
 
     inline serializer& end_stream(serializer& serializer)

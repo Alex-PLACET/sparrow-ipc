@@ -63,4 +63,38 @@ namespace sparrow_ipc
         const auto metadata_length = static_cast<int32_t>(utils::align_to_8(prefix_size + flatbuffer_size));
         return {.metadata_length = metadata_length, .body_length = body_length};
     }
+
+    serialized_record_batch_info serialize_dictionary_batch(
+        int64_t dictionary_id,
+        const sparrow::record_batch& record_batch,
+        bool is_delta,
+        any_output_stream& stream,
+        std::optional<CompressionType> compression,
+        std::optional<std::reference_wrapper<CompressionCache>> cache
+    )
+    {
+        // Build and serialize metadata
+        flatbuffers::FlatBufferBuilder builder = get_dictionary_batch_message_builder(
+            dictionary_id,
+            record_batch,
+            is_delta,
+            compression,
+            cache
+        );
+
+        // Write metadata (continuation + length prefix + flatbuffer + padding)
+        common_serialize(builder, stream);
+
+        // Track position before body to calculate body length
+        const size_t body_start = stream.size();
+
+        // Write body (same as record batch)
+        generate_body(record_batch, stream, compression, cache);
+
+        const auto body_length = static_cast<int64_t>(stream.size() - body_start);
+        const flatbuffers::uoffset_t flatbuffer_size = builder.GetSize();
+        const size_t prefix_size = continuation.size() + sizeof(uint32_t);  // 8 bytes
+        const auto metadata_length = static_cast<int32_t>(utils::align_to_8(prefix_size + flatbuffer_size));
+        return {.metadata_length = metadata_length, .body_length = body_length};
+    }
 }

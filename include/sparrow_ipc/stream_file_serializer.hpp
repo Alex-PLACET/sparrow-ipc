@@ -10,6 +10,7 @@
 #include "sparrow_ipc/any_output_stream.hpp"
 #include "sparrow_ipc/compression.hpp"
 #include "sparrow_ipc/config/config.hpp"
+#include "sparrow_ipc/dictionary_tracker.hpp"
 #include "sparrow_ipc/magic_values.hpp"
 #include "sparrow_ipc/serialize.hpp"
 #include "sparrow_ipc/serialize_utils.hpp"
@@ -38,6 +39,7 @@ namespace sparrow_ipc
      */
     SPARROW_IPC_API size_t write_footer(
         const sparrow::record_batch& record_batch,
+        const std::vector<record_batch_block>& dictionary_blocks,
         const std::vector<record_batch_block>& record_batch_blocks,
         any_output_stream& stream
     );
@@ -198,6 +200,27 @@ namespace sparrow_ipc
                 {
                     throw std::invalid_argument("Record batch schema does not match file serializer schema");
                 }
+
+                // Emit dictionary batches before the record batch
+                auto dictionaries = m_dict_tracker.extract_dictionaries_from_batch(rb);
+                for (const auto& dict_info : dictionaries)
+                {
+                    const int64_t dict_offset = static_cast<int64_t>(m_stream.size());
+                    const auto dict_block_info = serialize_dictionary_batch(
+                        dict_info.id,
+                        dict_info.data,
+                        dict_info.is_delta,
+                        m_stream,
+                        m_compression,
+                        compressed_buffers_cache
+                    );
+                    m_dictionary_blocks.emplace_back(
+                        dict_offset,
+                        dict_block_info.metadata_length,
+                        dict_block_info.body_length
+                    );
+                    m_dict_tracker.mark_emitted(dict_info.id, dict_info.is_delta);
+                }
                 
                 // Offset is from the start of the file to the record batch message
                 const int64_t offset = static_cast<int64_t>(m_stream.size());
@@ -301,6 +324,8 @@ namespace sparrow_ipc
         any_output_stream m_stream;
         bool m_ended{false};
         std::optional<CompressionType> m_compression;
+        dictionary_tracker m_dict_tracker;
+        std::vector<record_batch_block> m_dictionary_blocks;
         std::vector<record_batch_block> m_record_batch_blocks;
     };
 

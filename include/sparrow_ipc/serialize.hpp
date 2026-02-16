@@ -96,6 +96,34 @@ namespace sparrow_ipc
                            std::optional<std::reference_wrapper<CompressionCache>> cache);
     
     /**
+     * @brief Serializes a dictionary batch into a binary format following the Arrow IPC specification.
+     *
+     * This function serializes a dictionary batch containing the actual values referenced by
+     * dictionary-encoded fields. The dictionary data is provided as a single-column record batch.
+     * The serialized output follows the Arrow IPC encapsulated message format.
+     *
+     * @param dictionary_id The unique identifier for this dictionary, used to match with
+     *                      dictionary-encoded fields in record batches
+     * @param record_batch A single-column record batch containing the dictionary values
+     * @param is_delta If true, this dictionary should be appended to an existing dictionary
+     *                 with the same ID. If false, it replaces any existing dictionary.
+     * @param stream The output stream where the serialized dictionary batch will be written
+     * @param compression Optional: The compression type to use when serializing
+     * @param cache Optional: A cache to store and retrieve compressed buffers, avoiding recompression.
+     *              If compression is given, cache should be set as well.
+     * @return Information about the serialized dictionary batch (metadata and body lengths)
+     * @throws std::invalid_argument if record_batch doesn't have exactly one column
+     * @note Dictionary batches must be emitted before any RecordBatch that references them
+     */
+    SPARROW_IPC_API serialized_record_batch_info
+    serialize_dictionary_batch(int64_t dictionary_id,
+                               const sparrow::record_batch& record_batch,
+                               bool is_delta,
+                               any_output_stream& stream,
+                               std::optional<CompressionType> compression,
+                               std::optional<std::reference_wrapper<CompressionCache>> cache);
+    
+    /**
      * @brief Serializes a schema message for a record batch into a byte buffer.
      *
      * This function creates a serialized schema message following the Arrow IPC format.

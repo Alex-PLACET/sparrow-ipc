@@ -363,6 +363,39 @@ namespace sparrow_ipc
         std::optional<std::reference_wrapper<CompressionCache>> cache = std::nullopt
     );
 
+    /**
+     * @brief Creates a FlatBuffer message for a dictionary batch.
+     *
+     * This function serializes a dictionary batch into a FlatBuffer format conforming
+     * to the Arrow IPC specification. A dictionary batch contains the actual dictionary
+     * values that are referenced by dictionary-encoded arrays. The dictionary data is
+     * serialized as a RecordBatch with a single column.
+     *
+     * @param dictionary_id The unique identifier for this dictionary, used to match
+     *                      dictionary-encoded fields in record batches
+     * @param record_batch A single-column record batch containing the dictionary values
+     * @param is_delta If true, the dictionary values should be appended to an existing
+     *                 dictionary with the same ID. If false, this replaces any existing
+     *                 dictionary with the same ID.
+     * @param compression Optional: The compression algorithm to be used for the message body
+     * @param cache Optional: A cache for compressed buffers to avoid recompression if
+     *              compression is enabled. If compression is given, cache should be set as well.
+     * @return A FlatBufferBuilder containing the complete serialized dictionary batch
+     *         message ready for transmission or storage
+     * @throws std::invalid_argument if compression is given but not cache, or if the
+     *         record_batch doesn't have exactly one column
+     *
+     * @note Dictionary batches must be emitted before any RecordBatch that references them
+     * @note The returned message uses Arrow IPC format version V5
+     */
+    [[nodiscard]] flatbuffers::FlatBufferBuilder get_dictionary_batch_message_builder(
+        int64_t dictionary_id,
+        const sparrow::record_batch& record_batch,
+        bool is_delta = false,
+        std::optional<CompressionType> compression = std::nullopt,
+        std::optional<std::reference_wrapper<CompressionCache>> cache = std::nullopt
+    );
+
     // Helper function to extract and parse the footer from Arrow IPC file data
     [[nodiscard]] SPARROW_IPC_API const org::apache::arrow::flatbuf::Footer* get_footer_from_file_data(std::span<const uint8_t> file_data);
 }

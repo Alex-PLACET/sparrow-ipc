@@ -48,7 +48,12 @@ namespace sparrow_ipc
         m_stream.write(end_of_stream);
 
         // Write footer using the first record batch for schema and the tracked blocks
-        const size_t footer_size = write_footer(m_first_record_batch.value(), m_record_batch_blocks, m_stream);
+        const size_t footer_size = write_footer(
+            m_first_record_batch.value(),
+            m_dictionary_blocks,
+            m_record_batch_blocks,
+            m_stream
+        );
 
         // Write footer size (int32, little-endian)
         const int32_t footer_size_i32 = static_cast<int32_t>(footer_size);
@@ -64,6 +69,7 @@ namespace sparrow_ipc
 
     size_t write_footer(
         const sparrow::record_batch& record_batch,
+        const std::vector<record_batch_block>& dictionary_blocks,
         const std::vector<record_batch_block>& record_batch_blocks,
         any_output_stream& stream
     )
@@ -79,10 +85,14 @@ namespace sparrow_ipc
             fields_vec
         );
 
-        // Create empty dictionaries vector // TODO: Support dictionaries if needed
-        auto dictionaries_fb = footer_builder.CreateVectorOfStructs(
-            std::vector<org::apache::arrow::flatbuf::Block>{}
-        );
+        // Create dictionaries vector from tracked blocks
+        std::vector<org::apache::arrow::flatbuf::Block> dictionary_fb_blocks;
+        dictionary_fb_blocks.reserve(dictionary_blocks.size());
+        for (const auto& block : dictionary_blocks)
+        {
+            dictionary_fb_blocks.emplace_back(block.offset, block.metadata_length, block.body_length);
+        }
+        auto dictionaries_fb = footer_builder.CreateVectorOfStructs(dictionary_fb_blocks);
 
         // Create record batches vector from tracked blocks
         std::vector<org::apache::arrow::flatbuf::Block> fb_blocks;

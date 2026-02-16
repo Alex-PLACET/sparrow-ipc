@@ -57,6 +57,7 @@ const std::vector<std::filesystem::path> files_paths_to_test = {
     tests_resources_files_path / "generated_map_non_canonical",
     tests_resources_files_path / "generated_run_end_encoded",
     tests_resources_files_path / "generated_list_view",
+    tests_resources_files_path / "generated_dictionary",
 };
 
 const std::vector<std::filesystem::path> files_paths_to_test_with_lz4_compression = {
@@ -230,6 +231,7 @@ void compare_raw_buffers(const sparrow::arrow_proxy& proxy1, const sparrow::arro
 {
     const auto& buffers1 = proxy1.buffers();
     const auto& buffers2 = proxy2.buffers();
+    const bool has_dictionary_encoding = proxy1.schema().dictionary != nullptr || proxy2.schema().dictionary != nullptr;
     for (size_t i = 0; i < buffers1.size(); ++i)
     {
         const auto& buf1 = buffers1[i];
@@ -255,7 +257,9 @@ void compare_raw_buffers(const sparrow::arrow_proxy& proxy1, const sparrow::arro
             // because different implementations may store timezone info differently
             // (e.g., as metadata vs. embedded in values like json reader). The actual timestamp values
             // are compared semantically in `compare_record_batches` instead.
-            if (!proxy1.format().starts_with("ts"))
+            // NOTE: For dictionary-encoded arrays we only assert semantic equivalence at element level,
+            // as index and dictionary physical buffers may validly differ between implementations.
+            if (!proxy1.format().starts_with("ts") && !has_dictionary_encoding)
             {
                 CHECK_EQ(std::memcmp(buf1.data(), buf2.data(), buf1.size()), 0);
             }

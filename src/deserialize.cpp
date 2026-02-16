@@ -1,6 +1,12 @@
 #include "sparrow_ipc/deserialize.hpp"
 
+#include <unordered_map>
+
 #include "array_deserializer.hpp"
+#include <sparrow/arrow_interface/arrow_array.hpp>
+#include <sparrow/arrow_interface/arrow_schema.hpp>
+#include "sparrow_ipc/deserialize_primitive_array.hpp"
+#include "sparrow_ipc/dictionary_cache.hpp"
 #include "sparrow_ipc/encapsulated_message.hpp"
 #include "sparrow_ipc/magic_values.hpp"
 #include "sparrow_ipc/metadata.hpp"
@@ -11,6 +17,207 @@ namespace sparrow_ipc
     {
         // End-of-stream marker size in bytes
         constexpr size_t END_OF_STREAM_MARKER_SIZE = 8;
+
+        void collect_dictionary_fields(
+            const org::apache::arrow::flatbuf::Field& field,
+            std::unordered_map<int64_t, const org::apache::arrow::flatbuf::Field*>& dictionary_fields
+        )
+        {
+            if (const auto* dictionary = field.dictionary(); dictionary != nullptr)
+            {
+                dictionary_fields[dictionary->id()] = &field;
+            }
+
+            const auto* children = field.children();
+            if (children == nullptr)
+            {
+                return;
+            }
+
+            for (const auto* child : *children)
+            {
+                if (child != nullptr)
+                {
+                    collect_dictionary_fields(*child, dictionary_fields);
+                }
+            }
+        }
+
+        sparrow::array apply_dictionary_encoding(
+            sparrow::array index_array,
+            const org::apache::arrow::flatbuf::Field& field,
+            const dictionary_cache& dictionaries
+        )
+        {
+            const auto* dictionary_encoding = field.dictionary();
+            if (dictionary_encoding == nullptr)
+            {
+                return index_array;
+            }
+
+            const auto dictionary_batch = dictionaries.get_dictionary(dictionary_encoding->id());
+            if (!dictionary_batch.has_value())
+            {
+                throw std::runtime_error(
+                    "Dictionary with id " + std::to_string(dictionary_encoding->id())
+                    + " not found when decoding dictionary-encoded field"
+                );
+            }
+
+            const auto& dictionary_columns = dictionary_batch->get().columns();
+            if (dictionary_columns.size() != 1)
+            {
+                throw std::runtime_error("Dictionary batch must have exactly one column");
+            }
+
+            auto [index_arrow_array, index_arrow_schema] = sparrow::extract_arrow_structures(std::move(index_array));
+
+            const auto& dictionary_proxy = sparrow::detail::array_access::get_arrow_proxy(
+                dictionary_columns.front()
+            );
+            auto dictionary_arrow_array = sparrow::copy_array(
+                dictionary_proxy.array(),
+                dictionary_proxy.schema()
+            );
+            auto dictionary_arrow_schema = sparrow::copy_schema(dictionary_proxy.schema());
+
+            index_arrow_array.dictionary = new ArrowArray(std::move(dictionary_arrow_array));
+            index_arrow_schema.dictionary = new ArrowSchema(std::move(dictionary_arrow_schema));
+
+            return sparrow::array(std::move(index_arrow_array), std::move(index_arrow_schema));
+        }
+
+        sparrow::record_batch deserialize_dictionary_batch(
+            const org::apache::arrow::flatbuf::DictionaryBatch& dictionary_batch,
+            const encapsulated_message& encapsulated_message,
+            const std::unordered_map<int64_t, const org::apache::arrow::flatbuf::Field*>& dictionary_fields
+        )
+        {
+            const auto* dict_record_batch = dictionary_batch.data();
+            if (dict_record_batch == nullptr)
+            {
+                throw std::runtime_error("DictionaryBatch message has null RecordBatch data");
+            }
+
+            const auto field_it = dictionary_fields.find(dictionary_batch.id());
+            if (field_it == dictionary_fields.end())
+            {
+                throw std::runtime_error(
+                    "Dictionary with id " + std::to_string(dictionary_batch.id())
+                    + " is not declared in schema"
+                );
+            }
+
+            const auto* field = field_it->second;
+            std::optional<std::vector<sparrow::metadata_pair>> metadata;
+            if (field->custom_metadata() != nullptr)
+            {
+                metadata = to_sparrow_metadata(*field->custom_metadata());
+            }
+
+            size_t buffer_index = 0;
+            size_t node_index = 0;
+            size_t variadic_counts_idx = 0;
+
+            const std::string field_name = (field->name() != nullptr && field->name()->size() > 0)
+                                               ? field->name()->str()
+                                               : std::string("__dictionary__");
+
+            auto values = array_deserializer::deserialize(
+                *dict_record_batch,
+                encapsulated_message.body(),
+                dict_record_batch->length(),
+                field_name,
+                metadata,
+                field->nullable(),
+                buffer_index,
+                node_index,
+                variadic_counts_idx,
+                *field
+            );
+
+            std::vector<std::string> names;
+            names.emplace_back(field_name);
+            std::vector<sparrow::array> arrays;
+            arrays.emplace_back(std::move(values));
+            return sparrow::record_batch(std::move(names), std::move(arrays));
+        }
+
+        sparrow::array deserialize_dictionary_indices(
+            const org::apache::arrow::flatbuf::RecordBatch& record_batch,
+            const std::span<const uint8_t>& body,
+            int64_t length,
+            const std::string& name,
+            const std::optional<std::vector<sparrow::metadata_pair>>& metadata,
+            bool nullable,
+            size_t& buffer_index,
+            size_t& node_index,
+            const org::apache::arrow::flatbuf::Field& field
+        )
+        {
+            const auto* dictionary = field.dictionary();
+            if (dictionary == nullptr || dictionary->indexType() == nullptr)
+            {
+                throw std::runtime_error("Dictionary-encoded field is missing indexType");
+            }
+
+            ++node_index; // Consume one FieldNode for dictionary indices
+
+            const auto* index_type = dictionary->indexType();
+            const auto bit_width = index_type->bitWidth();
+            const bool is_signed = index_type->is_signed();
+
+            if (is_signed)
+            {
+                switch (bit_width)
+                {
+                    case 8:
+                        return sparrow::array(deserialize_primitive_array<int8_t>(
+                            record_batch, body, length, name, metadata, nullable, buffer_index
+                        ));
+                    case 16:
+                        return sparrow::array(deserialize_primitive_array<int16_t>(
+                            record_batch, body, length, name, metadata, nullable, buffer_index
+                        ));
+                    case 32:
+                        return sparrow::array(deserialize_primitive_array<int32_t>(
+                            record_batch, body, length, name, metadata, nullable, buffer_index
+                        ));
+                    case 64:
+                        return sparrow::array(deserialize_primitive_array<int64_t>(
+                            record_batch, body, length, name, metadata, nullable, buffer_index
+                        ));
+                    default:
+                        throw std::runtime_error(
+                            "Unsupported signed dictionary index bit width: " + std::to_string(bit_width)
+                        );
+                }
+            }
+
+            switch (bit_width)
+            {
+                case 8:
+                    return sparrow::array(deserialize_primitive_array<uint8_t>(
+                        record_batch, body, length, name, metadata, nullable, buffer_index
+                    ));
+                case 16:
+                    return sparrow::array(deserialize_primitive_array<uint16_t>(
+                        record_batch, body, length, name, metadata, nullable, buffer_index
+                    ));
+                case 32:
+                    return sparrow::array(deserialize_primitive_array<uint32_t>(
+                        record_batch, body, length, name, metadata, nullable, buffer_index
+                    ));
+                case 64:
+                    return sparrow::array(deserialize_primitive_array<uint64_t>(
+                        record_batch, body, length, name, metadata, nullable, buffer_index
+                    ));
+                default:
+                    throw std::runtime_error(
+                        "Unsupported unsigned dictionary index bit width: " + std::to_string(bit_width)
+                    );
+            }
+        }
     }
 
     /**
@@ -38,7 +245,8 @@ namespace sparrow_ipc
         const org::apache::arrow::flatbuf::RecordBatch& record_batch,
         const org::apache::arrow::flatbuf::Schema& schema,
         const encapsulated_message& encapsulated_message,
-        const std::vector<std::optional<std::vector<sparrow::metadata_pair>>>& field_metadata
+        const std::vector<std::optional<std::vector<sparrow::metadata_pair>>>& field_metadata,
+        const dictionary_cache& dictionaries
     )
     {
         const size_t num_fields = schema.fields() == nullptr ? 0 : static_cast<size_t>(schema.fields()->size());
@@ -63,18 +271,32 @@ namespace sparrow_ipc
             const bool nullable = field->nullable();
             const auto field_type = field->type_type();
 
-            arrays.emplace_back(array_deserializer::deserialize(
-                record_batch,
-                encapsulated_message.body(),
-                record_batch.length(),
-                name,
-                metadata,
-                nullable,
-                buffer_index,
-                node_index,
-                variadic_counts_idx,
-                *field
-            ));
+            sparrow::array decoded = field->dictionary() != nullptr
+                                        ? deserialize_dictionary_indices(
+                                              record_batch,
+                                              encapsulated_message.body(),
+                                              record_batch.length(),
+                                              name,
+                                              metadata,
+                                              nullable,
+                                              buffer_index,
+                                              node_index,
+                                              *field
+                                          )
+                                        : array_deserializer::deserialize(
+                                              record_batch,
+                                              encapsulated_message.body(),
+                                              record_batch.length(),
+                                              name,
+                                              metadata,
+                                              nullable,
+                                              buffer_index,
+                                              node_index,
+                                              variadic_counts_idx,
+                                              *field
+                                          );
+
+            arrays.emplace_back(apply_dictionary_encoding(std::move(decoded), *field, dictionaries));
         }
         return arrays;
     }
@@ -87,6 +309,8 @@ namespace sparrow_ipc
         std::vector<bool> fields_nullable;
         std::vector<sparrow::data_type> field_types;
         std::vector<std::optional<std::vector<sparrow::metadata_pair>>> fields_metadata;
+        std::unordered_map<int64_t, const org::apache::arrow::flatbuf::Field*> dictionary_fields;
+        dictionary_cache dictionaries;
 
         while (!data.empty())
         {
@@ -138,6 +362,11 @@ namespace sparrow_ipc
                                            ? std::nullopt
                                            : std::make_optional(to_sparrow_metadata(*fb_custom_metadata));
                         fields_metadata.push_back(std::move(metadata));
+
+                        if (field != nullptr)
+                        {
+                            collect_dictionary_fields(*field, dictionary_fields);
+                        }
                     }
                 }
                 break;
@@ -156,18 +385,44 @@ namespace sparrow_ipc
                         *record_batch,
                         *schema,
                         encapsulated_message,
-                        fields_metadata
+                        fields_metadata,
+                        dictionaries
                     );
                     auto names_copy = field_names;
                     sparrow::record_batch sp_record_batch(std::move(names_copy), std::move(arrays));
                     record_batches.emplace_back(std::move(sp_record_batch));
                 }
                 break;
-                case org::apache::arrow::flatbuf::MessageHeader::Tensor:
                 case org::apache::arrow::flatbuf::MessageHeader::DictionaryBatch:
+                {
+                    if (schema == nullptr)
+                    {
+                        throw std::runtime_error("DictionaryBatch encountered before Schema message.");
+                    }
+
+                    const auto* dictionary_batch = message->header_as_DictionaryBatch();
+                    if (dictionary_batch == nullptr)
+                    {
+                        throw std::runtime_error("DictionaryBatch message header is null.");
+                    }
+
+                    auto dictionary_data = deserialize_dictionary_batch(
+                        *dictionary_batch,
+                        encapsulated_message,
+                        dictionary_fields
+                    );
+
+                    dictionaries.store_dictionary(
+                        dictionary_batch->id(),
+                        std::move(dictionary_data),
+                        dictionary_batch->isDelta()
+                    );
+                }
+                break;
+                case org::apache::arrow::flatbuf::MessageHeader::Tensor:
                 case org::apache::arrow::flatbuf::MessageHeader::SparseTensor:
                     throw std::runtime_error(
-                        "Unsupported message type: Tensor, DictionaryBatch, or SparseTensor"
+                        "Unsupported message type: Tensor or SparseTensor"
                     );
                 default:
                     throw std::runtime_error("Unknown message header type.");
