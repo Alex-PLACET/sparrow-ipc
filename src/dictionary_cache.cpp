@@ -34,12 +34,9 @@ namespace sparrow_ipc
                     "Delta dictionary updates not yet fully implemented - requires array concatenation"
                 );
             }
-            m_dictionaries[id] = std::move(batch);
         }
-        else
-        {
-            m_dictionaries[id] = std::move(batch);
-        }
+
+        m_dictionaries.insert_or_assign(id, std::move(batch));
     }
 
     std::optional<std::reference_wrapper<const sparrow::record_batch>>
