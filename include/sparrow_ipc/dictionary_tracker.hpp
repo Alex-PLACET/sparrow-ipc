@@ -15,7 +15,6 @@
 #pragma once
 
 #include <cstdint>
-#include <map>
 #include <set>
 #include <vector>
 
@@ -70,9 +69,8 @@ namespace sparrow_ipc
          * dictionary for subsequent record batches (unless it's a delta update).
          *
          * @param id The dictionary ID that was emitted
-         * @param is_delta Whether this was a delta update
          */
-        void mark_emitted(int64_t id, bool is_delta);
+        void mark_emitted(int64_t id);
 
         /**
          * @brief Check if a dictionary has been emitted.

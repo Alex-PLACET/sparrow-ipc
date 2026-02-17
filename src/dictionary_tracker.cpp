@@ -14,7 +14,7 @@
 
 #include "sparrow_ipc/dictionary_tracker.hpp"
 
-#include <functional>
+#include "sparrow_ipc/dictionary_utils.hpp"
 
 #include <sparrow/arrow_interface/arrow_array.hpp>
 #include <sparrow/arrow_interface/arrow_schema.hpp>
@@ -33,7 +33,11 @@ namespace sparrow_ipc
          * @param schema The ArrowSchema to extract ID from
          * @return The dictionary ID
          */
-        int64_t extract_dictionary_id(const ArrowSchema* schema, std::string_view fallback_name)
+        int64_t extract_dictionary_id(
+            const ArrowSchema* schema,
+            std::string_view fallback_name,
+            size_t fallback_index
+        )
         {
             if (schema == nullptr || schema->dictionary == nullptr)
             {
@@ -41,20 +45,14 @@ namespace sparrow_ipc
             }
 
             // Try to extract from metadata first
-            if (schema->metadata != nullptr)
+            const auto metadata = parse_dictionary_metadata(*schema);
+            if (metadata.id.has_value())
             {
-                const auto metadata_view = sparrow::key_value_view(schema->metadata);
-                for (const auto& [key, value] : metadata_view)
-                {
-                    if (key == "ARROW:dictionary:id")
-                    {
-                        return std::stoll(std::string(value));
-                    }
-                }
+                return *metadata.id;
             }
 
             // Fallback: use stable hash of field name
-            return static_cast<int64_t>(std::hash<std::string_view>{}(fallback_name));
+            return compute_fallback_dictionary_id(fallback_name, fallback_index);
         }
 
         /**
@@ -89,7 +87,7 @@ namespace sparrow_ipc
                 const std::string_view fallback_name = column_idx < names.size()
                                                            ? std::string_view(names[column_idx])
                                                            : std::string_view("__dictionary__");
-                const int64_t dict_id = extract_dictionary_id(&schema, fallback_name);
+                const int64_t dict_id = extract_dictionary_id(&schema, fallback_name, column_idx);
 
                 // Only include if not already emitted (unless it's a delta update)
                 if (!is_emitted(dict_id))
@@ -122,18 +120,7 @@ namespace sparrow_ipc
                     );
 
                     // Check metadata for ordering
-                    bool is_ordered = false;
-                    if (schema.metadata != nullptr)
-                    {
-                        const auto metadata_view = sparrow::key_value_view(schema.metadata);
-                        for (const auto& [key, value] : metadata_view)
-                        {
-                            if (key == "ARROW:dictionary:ordered")
-                            {
-                                is_ordered = (value == "true" || value == "1");
-                            }
-                        }
-                    }
+                    const bool is_ordered = parse_dictionary_metadata(schema).is_ordered;
 
                     dictionary_info info{
                         .id = dict_id,
@@ -150,7 +137,7 @@ namespace sparrow_ipc
         return dictionaries;
     }
 
-    void dictionary_tracker::mark_emitted(int64_t id, bool is_delta)
+    void dictionary_tracker::mark_emitted(int64_t id)
     {
         m_emitted_dict_ids.insert(id);
     }

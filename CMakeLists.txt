@@ -126,6 +126,7 @@ set(SPARROW_IPC_HEADERS
     ${SPARROW_IPC_INCLUDE_DIR}/sparrow_ipc/deserialize_array_impl.hpp
     ${SPARROW_IPC_INCLUDE_DIR}/sparrow_ipc/dictionary_cache.hpp
     ${SPARROW_IPC_INCLUDE_DIR}/sparrow_ipc/dictionary_tracker.hpp
+    ${SPARROW_IPC_INCLUDE_DIR}/sparrow_ipc/dictionary_utils.hpp
     ${SPARROW_IPC_INCLUDE_DIR}/sparrow_ipc/deserialize_decimal_array.hpp
     ${SPARROW_IPC_INCLUDE_DIR}/sparrow_ipc/deserialize_duration_array.hpp
     ${SPARROW_IPC_INCLUDE_DIR}/sparrow_ipc/deserialize_fixed_size_binary_array.hpp
@@ -165,6 +166,7 @@ set(SPARROW_IPC_SRC
     ${SPARROW_IPC_SOURCE_DIR}/deserialize_fixed_size_binary_array.cpp
     ${SPARROW_IPC_SOURCE_DIR}/dictionary_cache.cpp
     ${SPARROW_IPC_SOURCE_DIR}/dictionary_tracker.cpp
+    ${SPARROW_IPC_SOURCE_DIR}/dictionary_utils.cpp
     ${SPARROW_IPC_SOURCE_DIR}/deserialize_null_array.cpp
     ${SPARROW_IPC_SOURCE_DIR}/deserialize_utils.cpp
     ${SPARROW_IPC_SOURCE_DIR}/deserialize.cpp

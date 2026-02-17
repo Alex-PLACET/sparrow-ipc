@@ -71,7 +71,8 @@ namespace sparrow_ipc
     [[nodiscard]] ::flatbuffers::Offset<org::apache::arrow::flatbuf::Field> create_field(
         flatbuffers::FlatBufferBuilder& builder,
         const ArrowSchema& arrow_schema,
-        std::optional<std::string_view> name_override = std::nullopt
+        std::optional<std::string_view> name_override = std::nullopt,
+        std::optional<int64_t> dictionary_id_override = std::nullopt
     );
 
     /**

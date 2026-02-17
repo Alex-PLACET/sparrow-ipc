@@ -106,7 +106,20 @@ namespace sparrow_ipc
                            m_stream.size(),
                            [&compressed_buffers_cache, this](size_t acc, const sparrow::record_batch& rb)
                            {
-                               return acc + calculate_record_batch_message_size(rb, m_compression, compressed_buffers_cache);
+                               size_t dictionaries_size = 0;
+                               const auto dictionaries = m_dict_tracker.extract_dictionaries_from_batch(rb);
+                               for (const auto& dict_info : dictionaries)
+                               {
+                                   dictionaries_size += calculate_record_batch_message_size(
+                                       dict_info.data,
+                                       m_compression,
+                                       compressed_buffers_cache
+                                   );
+                               }
+
+                               return acc
+                                      + dictionaries_size
+                                      + calculate_record_batch_message_size(rb, m_compression, compressed_buffers_cache);
                            }
                        )
                        + (m_schema_received ? 0 : calculate_schema_message_size(*record_batches.begin()));
@@ -140,7 +153,7 @@ namespace sparrow_ipc
                         m_compression,
                         compressed_buffers_cache
                     );
-                    m_dict_tracker.mark_emitted(dict_info.id, dict_info.is_delta);
+                    m_dict_tracker.mark_emitted(dict_info.id);
                 }
                 
                 serialize_record_batch(rb, m_stream, m_compression, compressed_buffers_cache);

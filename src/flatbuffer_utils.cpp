@@ -6,6 +6,7 @@
 #include <sparrow/utils/ranges.hpp>
 
 #include "compression_impl.hpp"
+#include "sparrow_ipc/dictionary_utils.hpp"
 #include "sparrow_ipc/magic_values.hpp"
 
 namespace sparrow_ipc
@@ -465,7 +466,8 @@ namespace sparrow_ipc
     ::flatbuffers::Offset<org::apache::arrow::flatbuf::Field> create_field(
         flatbuffers::FlatBufferBuilder& builder,
         const ArrowSchema& arrow_schema,
-        std::optional<std::string_view> name_override
+        std::optional<std::string_view> name_override,
+        std::optional<int64_t> dictionary_id_override
     )
     {
         const bool is_dictionary_encoded = arrow_schema.dictionary != nullptr;
@@ -483,35 +485,27 @@ namespace sparrow_ipc
         flatbuffers::Offset<org::apache::arrow::flatbuf::DictionaryEncoding> dictionary_offset = 0;
         if (is_dictionary_encoded)
         {
-            // Extract dictionary ID from metadata
-            int64_t dict_id = 0;
-            bool is_ordered = false;
-
-            if (arrow_schema.metadata != nullptr)
-            {
-                const auto metadata_view = sparrow::key_value_view(arrow_schema.metadata);
-                for (const auto& [key, value] : metadata_view)
-                {
-                    if (key == "ARROW:dictionary:id")
-                    {
-                        dict_id = std::stoll(std::string(value));
-                    }
-                    else if (key == "ARROW:dictionary:ordered")
-                    {
-                        is_ordered = (value == "true" || value == "1");
-                    }
-                }
-            }
+            // Extract dictionary metadata
+            const auto dict_metadata = parse_dictionary_metadata(arrow_schema);
+            int64_t dict_id = dict_metadata.id.value_or(0);
+            const bool is_ordered = dict_metadata.is_ordered;
             
             // If no ID in metadata, use a stable hash of the field name
             if (dict_id == 0)
             {
-                const std::string_view field_name = name_override.has_value()
-                                                        ? name_override.value()
-                                                        : (arrow_schema.name != nullptr
-                                                               ? std::string_view(arrow_schema.name)
-                                                               : std::string_view("__dictionary__"));
-                dict_id = static_cast<int64_t>(std::hash<std::string_view>{}(field_name));
+                if (dictionary_id_override.has_value())
+                {
+                    dict_id = *dictionary_id_override;
+                }
+                else
+                {
+                    const std::string_view field_name = name_override.has_value()
+                                                            ? name_override.value()
+                                                            : (arrow_schema.name != nullptr
+                                                                   ? std::string_view(arrow_schema.name)
+                                                                   : std::string_view("__dictionary__"));
+                    dict_id = compute_fallback_dictionary_id(field_name, 0);
+                }
             }
             
             // Create index type from the schema's format (the indices type)
@@ -599,10 +593,13 @@ namespace sparrow_ipc
         for (size_t i = 0; i < columns.size(); ++i)
         {
             const auto& arrow_schema = sparrow::detail::array_access::get_arrow_proxy(columns[i]).schema();
+            const auto field_name = names[i];
+            const int64_t fallback_dict_id = compute_fallback_dictionary_id(field_name, i);
             flatbuffers::Offset<org::apache::arrow::flatbuf::Field> field = create_field(
                 builder,
                 arrow_schema,
-                names[i]
+                field_name,
+                fallback_dict_id
             );
             children_vec.emplace_back(field);
         }
