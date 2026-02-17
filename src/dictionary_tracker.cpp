@@ -73,17 +73,18 @@ namespace sparrow_ipc
     )
     {
         std::vector<dictionary_info> dictionaries;
+        const auto& columns = batch.columns();
+        const auto& names = batch.names();
 
         // Scan each column for dictionary encoding
-        for (size_t column_idx = 0; column_idx < batch.columns().size(); ++column_idx)
+        for (size_t column_idx = 0; column_idx < columns.size(); ++column_idx)
         {
-            const auto& column = batch.columns()[column_idx];
+            const auto& column = columns[column_idx];
             const auto& arrow_proxy = sparrow::detail::array_access::get_arrow_proxy(column);
             const auto& schema = arrow_proxy.schema();
 
             if (has_dictionary(&schema))
             {
-                const auto& names = batch.names();
                 const std::string_view fallback_name = column_idx < names.size()
                                                            ? std::string_view(names[column_idx])
                                                            : std::string_view("__dictionary__");
@@ -107,29 +108,27 @@ namespace sparrow_ipc
 
                     // Create a single-column record batch from dictionary Arrow pointers
                     std::vector<sparrow::array> dict_arrays;
+                    dict_arrays.reserve(1);
                     dict_arrays.emplace_back(array.dictionary, dict_schema);
                     
                     const std::string dict_name = (dict_schema->name != nullptr && std::string_view(dict_schema->name).size() > 0)
                                                       ? std::string(dict_schema->name)
                                                       : std::string("__dictionary__");
-                    std::vector<std::string> dict_names = {dict_name};
-                    
-                    sparrow::record_batch dict_batch(
-                        std::move(dict_names),
-                        std::move(dict_arrays)
-                    );
+                    std::vector<std::string> dict_names;
+                    dict_names.reserve(1);
+                    dict_names.push_back(dict_name);
 
                     // Check metadata for ordering
                     const bool is_ordered = parse_dictionary_metadata(schema).is_ordered;
 
-                    dictionary_info info{
-                        .id = dict_id,
-                        .data = std::move(dict_batch),
-                        .is_ordered = is_ordered,
-                        .is_delta = false  // Initial emission is never delta
-                    };
-
-                    dictionaries.push_back(std::move(info));
+                    dictionaries.emplace_back(
+                        dictionary_info{
+                            .id = dict_id,
+                            .data = sparrow::record_batch(std::move(dict_names), std::move(dict_arrays)),
+                            .is_ordered = is_ordered,
+                            .is_delta = false  // Initial emission is never delta
+                        }
+                    );
                 }
             }
         }
