@@ -491,7 +491,7 @@ namespace sparrow_ipc
             const bool is_ordered = dict_metadata.is_ordered;
             
             // If no ID in metadata, use a stable hash of the field name
-            if (dict_id == 0)
+            if (!dict_metadata.id.has_value())
             {
                 if (dictionary_id_override.has_value())
                 {
