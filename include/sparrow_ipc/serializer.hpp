@@ -100,14 +100,15 @@ namespace sparrow_ipc
             // The benefit of capacity allocation should be evaluated vs storing a cache of compressed buffers of record batches.
             const auto reserve_function = [&record_batches, &compressed_buffers_cache, this]()
             {
+                dictionary_tracker reservation_tracker = m_dict_tracker;
                 return std::accumulate(
                            record_batches.begin(),
                            record_batches.end(),
                            m_stream.size(),
-                           [&compressed_buffers_cache, this](size_t acc, const sparrow::record_batch& rb)
+                           [&compressed_buffers_cache, &reservation_tracker, this](size_t acc, const sparrow::record_batch& rb)
                            {
                                size_t dictionaries_size = 0;
-                               const auto dictionaries = m_dict_tracker.extract_dictionaries_from_batch(rb);
+                               const auto dictionaries = reservation_tracker.extract_dictionaries_from_batch(rb);
                                for (const auto& dict_info : dictionaries)
                                {
                                    dictionaries_size += calculate_record_batch_message_size(
@@ -115,6 +116,7 @@ namespace sparrow_ipc
                                        m_compression,
                                        compressed_buffers_cache
                                    );
+                                   reservation_tracker.mark_emitted(dict_info.id);
                                }
 
                                return acc

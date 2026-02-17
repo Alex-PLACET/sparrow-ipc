@@ -42,13 +42,13 @@ namespace sparrow_ipc
         /**
          * @brief Store or update a dictionary.
          *
-         * If is_delta is true and a dictionary with the given ID already exists,
-         * the new data is appended to the existing dictionary. Otherwise, the
-         * dictionary is replaced (or inserted if it doesn't exist).
+         * Stores or updates a dictionary identified by the given ID. Currently,
+         * the is_delta parameter is reserved for future use and is not supported.
+         * The dictionary is always replaced (or inserted if it doesn't exist).
          *
          * @param id The dictionary ID
          * @param batch The dictionary data as a single-column record batch
-         * @param is_delta Whether to append (true) or replace (false)
+         * @param is_delta Reserved for future use (delta updates not yet supported)
          * @throws std::invalid_argument if batch doesn't have exactly one column
          */
         void store_dictionary(int64_t id, sparrow::record_batch batch, bool is_delta);

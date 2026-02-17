@@ -27,27 +27,17 @@ namespace sparrow_ipc
 
         if (is_delta)
         {
-            // Delta update: append to existing dictionary
             auto it = m_dictionaries.find(id);
             if (it != m_dictionaries.end())
             {
-                // Need to concatenate the existing dictionary with the new data
-                // For now, we'll implement this by creating a new concatenated batch
-                // TODO: Implement efficient concatenation using sparrow's array concatenation
-                
-                // For the initial implementation, we'll replace the dictionary
-                // Full delta support requires array concatenation which should be implemented properly
-                throw std::runtime_error("Delta dictionary updates not yet fully implemented - requires array concatenation");
+                throw std::runtime_error(
+                    "Delta dictionary updates not yet fully implemented - requires array concatenation"
+                );
             }
-            else
-            {
-                // No existing dictionary, so just store it
-                m_dictionaries[id] = std::move(batch);
-            }
+            m_dictionaries[id] = std::move(batch);
         }
         else
         {
-            // Replacement: overwrite existing dictionary
             m_dictionaries[id] = std::move(batch);
         }
     }
