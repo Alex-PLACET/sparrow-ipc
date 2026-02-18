@@ -469,17 +469,14 @@ namespace sparrow_ipc
     ::flatbuffers::Offset<org::apache::arrow::flatbuf::Field> create_field(
         flatbuffers::FlatBufferBuilder& builder,
         const ArrowSchema& arrow_schema,
-        std::optional<std::string_view> name_override,
-        std::optional<int64_t> dictionary_id_override
+        std::string_view name_override,
+        int64_t dictionary_id_override
     )
     {
         const bool is_dictionary_encoded = arrow_schema.dictionary != nullptr;
         const ArrowSchema& value_schema = is_dictionary_encoded ? *arrow_schema.dictionary : arrow_schema;
 
-        flatbuffers::Offset<flatbuffers::String>
-            fb_name_offset = name_override.has_value()
-                                 ? builder.CreateString(name_override.value())
-                                 : (arrow_schema.name == nullptr ? 0 : builder.CreateString(arrow_schema.name));
+        flatbuffers::Offset<flatbuffers::String> fb_name_offset = builder.CreateString(name_override);
         const auto [type_enum, type_offset] = get_flatbuffer_type(builder, value_schema.format);
         auto fb_metadata_offset = create_metadata(builder, arrow_schema);
         const auto children = create_children(builder, value_schema);
@@ -493,36 +490,7 @@ namespace sparrow_ipc
             const bool is_ordered = dict_metadata.is_ordered;
 
             // If no ID in metadata, use a hash of the field name
-            const int64_t dict_id = [&]()
-            {
-                if (!dict_metadata.id.has_value())
-                {
-                    if (dictionary_id_override.has_value())
-                    {
-                        return *dictionary_id_override;
-                    }
-                    else
-                    {
-                        if (name_override.has_value())
-                        {
-                            return compute_fallback_dictionary_id(*name_override, 0);
-                        }
-                        else if (arrow_schema.name != nullptr)
-                        {
-                            return compute_fallback_dictionary_id(arrow_schema.name, 0);
-                        }
-                        else
-                        {
-                            static int64_t counter = 0;
-                            if(++counter == std::numeric_limits<int64_t>::max())
-                            {
-                                counter = 0; // reset counter if it overflows, to avoid negative IDs
-                            }
-                            return counter;
-                        }
-                    }
-                }
-            }();
+            const int64_t dict_id = dict_metadata.id.value_or(dictionary_id_override);
 
             // Create index type from the schema's format (the indices type)
             const auto index_data_type = sparrow::format_to_data_type(arrow_schema.format);
@@ -593,7 +561,14 @@ namespace sparrow_ipc
                 throw std::invalid_argument("ArrowSchema has null child pointer");
             }
             const auto& child = *arrow_schema.children[i];
-            flatbuffers::Offset<org::apache::arrow::flatbuf::Field> field = create_field(builder, child);
+            const std::string field_name = child.name != nullptr
+                                               ? child.name
+                                               : (arrow_schema.name != nullptr ? std::string(arrow_schema.name)
+                                                                               : "base")
+                                                     + "_child_" + std::to_string(i);
+            const int64_t fallback_dict_id = compute_fallback_dictionary_id(field_name, i);
+            flatbuffers::Offset<org::apache::arrow::flatbuf::Field>
+                field = create_field(builder, child, field_name, fallback_dict_id);
             children_vec.emplace_back(field);
         }
         return children_vec.empty() ? 0 : builder.CreateVector(children_vec);
@@ -609,7 +584,7 @@ namespace sparrow_ipc
         for (size_t i = 0; i < columns.size(); ++i)
         {
             const auto& arrow_schema = sparrow::detail::array_access::get_arrow_proxy(columns[i]).schema();
-            const auto field_name = names[i];
+            const auto& field_name = names[i];
             const int64_t fallback_dict_id = compute_fallback_dictionary_id(field_name, i);
             flatbuffers::Offset<org::apache::arrow::flatbuf::Field>
                 field = create_field(builder, arrow_schema, field_name, fallback_dict_id);

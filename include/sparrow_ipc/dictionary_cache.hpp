@@ -28,9 +28,8 @@ namespace sparrow_ipc
      * @brief Caches dictionaries during deserialization.
      *
      * This class stores dictionaries received from DictionaryBatch messages and
-     * provides them when reconstructing dictionary-encoded arrays. Currently,
-     * delta updates (appending to existing dictionaries) are not supported; the
-     * dictionary associated with a given ID is always replaced (overwritten).
+        * provides them when reconstructing dictionary-encoded arrays. Delta updates
+        * append dictionary values to existing dictionaries with the same ID.
      *
      * Dictionaries are stored as single-column record batches and are referenced
      * by their integer ID. Multiple fields can share the same dictionary by
@@ -42,13 +41,13 @@ namespace sparrow_ipc
         /**
          * @brief Store or update a dictionary.
          *
-         * Stores or updates a dictionary identified by the given ID. Currently,
-         * the is_delta parameter is reserved for future use and is not supported.
-         * The dictionary is always replaced (or inserted if it doesn't exist).
+         * Stores or updates a dictionary identified by the given ID.
+         * If is_delta is true and a dictionary with the same ID already exists,
+         * values are appended to the existing dictionary.
          *
          * @param id The dictionary ID
          * @param batch The dictionary data as a single-column record batch
-         * @param is_delta Reserved for future use (delta updates not yet supported)
+         * @param is_delta If true, append values to existing dictionary with the same ID
          * @throws std::invalid_argument if batch doesn't have exactly one column
          */
         void store_dictionary(int64_t id, sparrow::record_batch batch, bool is_delta);

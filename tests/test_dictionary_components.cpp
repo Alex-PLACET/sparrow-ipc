@@ -161,9 +161,21 @@ TEST_SUITE("dictionary_components")
         SUBCASE("delta with existing id throws")
         {
             const auto delta_existing = create_dictionary_values_batch();
+            cache.store_dictionary(7, delta_existing, true);
+
+            const auto appended = cache.get_dictionary(7);
+            REQUIRE(appended.has_value());
+            CHECK_EQ(appended->get().nb_rows(), size_t{6});
+        }
+
+        SUBCASE("delta with existing id and mismatched type throws")
+        {
+            auto mismatched = sp::record_batch(
+                {{"dict_values", sp::array(sp::primitive_array<int32_t>({1, 2, 3}))}}
+            );
             CHECK_THROWS_WITH_AS(
-                cache.store_dictionary(7, delta_existing, true),
-                "Delta dictionary updates not yet fully implemented - requires array concatenation",
+                cache.store_dictionary(7, std::move(mismatched), true),
+                "Delta dictionary update has mismatched dictionary value types",
                 std::runtime_error
             );
         }
