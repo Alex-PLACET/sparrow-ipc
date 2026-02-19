@@ -126,9 +126,12 @@ namespace sparrow_ipc
                     return concatenate_string_like_arrays<sparrow::string_array>(lhs, rhs);
                 case sparrow::data_type::LARGE_STRING:
                     return concatenate_string_like_arrays<sparrow::big_string_array>(lhs, rhs);
+                // TODO: add BINARY and LARGE_BINARY support - requires a byte-vector accumulator
+                // analogous to concatenate_string_like_arrays but using std::vector<uint8_t> elements.
                 default:
                     throw std::runtime_error(
-                        "Delta dictionary update is not supported for this dictionary value type"
+                        "Delta dictionary update is not supported for this dictionary value type. "
+                        "Supported types: bool, [u]int{8,16,32,64}, float, double, string, large_string."
                     );
             }
         }

@@ -158,7 +158,7 @@ TEST_SUITE("dictionary_components")
             CHECK(cache.contains(8));
         }
 
-        SUBCASE("delta with existing id throws")
+        SUBCASE("delta with existing id appends values")
         {
             const auto delta_existing = create_dictionary_values_batch();
             cache.store_dictionary(7, delta_existing, true);

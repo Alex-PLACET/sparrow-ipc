@@ -5,9 +5,15 @@
 
 #include "doctest/doctest.h"
 
+#include <sparrow/dictionary_encoded_array.hpp>
+#include <sparrow/variable_size_binary_array.hpp>
+
+#include "sparrow_ipc/any_output_stream.hpp"
 #include "sparrow_ipc/deserialize.hpp"
+#include "sparrow_ipc/dictionary_tracker.hpp"
 #include "sparrow_ipc/flatbuffer_utils.hpp"
 #include "sparrow_ipc/memory_output_stream.hpp"
+#include "sparrow_ipc/serialize.hpp"
 #include "sparrow_ipc/serializer.hpp"
 #include "sparrow_ipc/stream_file_serializer.hpp"
 
@@ -96,5 +102,85 @@ TEST_SUITE("Dictionary support")
         REQUIRE_NE(footer, nullptr);
         REQUIRE_NE(footer->dictionaries(), nullptr);
         CHECK_GT(footer->dictionaries()->size(), 0);
+    }
+
+    TEST_CASE("Delta dictionary deserialization - spec example")
+    {
+        // Tests the spec example from the Arrow IPC format documentation:
+        //   <SCHEMA>
+        //   <DICTIONARY 0>  (0)"A" (1)"B" (2)"C"
+        //   <RECORD BATCH 0>  0 1 2 1  -> ["A","B","C","B"]
+        //   <DICTIONARY 0 DELTA>  (3)"D" (4)"E"
+        //   <RECORD BATCH 1>  3 2 4 0  -> ["D","C","E","A"]
+        //   EOS
+        namespace sp = sparrow;
+        using dict_array_t = sp::dictionary_encoded_array<int8_t>;
+
+        // batch0: dict = ["A","B","C"], indices = [0,1,2,1]
+        sp::record_batch batch0(
+            {{"col", sp::array(dict_array_t(
+                dict_array_t::keys_buffer_type{0, 1, 2, 1},
+                sp::array(sp::string_array(std::vector<std::string>{"A", "B", "C"}))
+            ))}}
+        );
+
+        // Extract the dict_id assigned to "col" at column index 0
+        sparrow_ipc::dictionary_tracker tracker;
+        const auto dict_infos = tracker.extract_dictionaries_from_batch(batch0);
+        REQUIRE_EQ(dict_infos.size(), size_t{1});
+        const int64_t dict_id = dict_infos[0].id;
+
+        // batch1: indices = [3,2,4,0] referencing extended dict ["A","B","C","D","E"]
+        sp::record_batch batch1(
+            {{"col", sp::array(dict_array_t(
+                dict_array_t::keys_buffer_type{3, 2, 4, 0},
+                sp::array(sp::string_array(std::vector<std::string>{"A", "B", "C", "D", "E"}))
+            ))}}
+        );
+
+        // delta dict: only the new values ["D","E"]
+        sp::record_batch delta(
+            {{"col", sp::array(sp::string_array(std::vector<std::string>{"D", "E"}))}}
+        );
+
+        // Build the IPC stream manually: SCHEMA + BASE_DICT + BATCH_0 + DELTA_DICT + BATCH_1 + EOS
+        std::vector<uint8_t> bytes;
+        sparrow_ipc::memory_output_stream mem_stream(bytes);
+        sparrow_ipc::any_output_stream stream(mem_stream);
+
+        sparrow_ipc::serialize_schema_message(batch0, stream);
+        sparrow_ipc::serialize_dictionary_batch(dict_id, dict_infos[0].data, false, stream, std::nullopt, std::nullopt);
+        sparrow_ipc::serialize_record_batch(batch0, stream, std::nullopt, std::nullopt);
+        sparrow_ipc::serialize_dictionary_batch(dict_id, delta, true, stream, std::nullopt, std::nullopt);
+        sparrow_ipc::serialize_record_batch(batch1, stream, std::nullopt, std::nullopt);
+        stream.write(sparrow_ipc::end_of_stream);
+
+        // Deserialize and verify
+        const auto result = sparrow_ipc::deserialize_stream(std::span<const uint8_t>(bytes));
+
+        REQUIRE_EQ(result.size(), size_t{2});
+
+        // batch0: indices [0,1,2,1] in base dict ["A","B","C"] -> ["A","B","C","B"]
+        const auto& rb0 = result[0];
+        REQUIRE_EQ(rb0.nb_rows(), size_t{4});
+        CHECK_EQ(rb0.get_column(0)[1], rb0.get_column(0)[3]);   // "B" == "B"
+        CHECK_NE(rb0.get_column(0)[0], rb0.get_column(0)[1]);   // "A" != "B"
+        CHECK_NE(rb0.get_column(0)[1], rb0.get_column(0)[2]);   // "B" != "C"
+
+        // batch1: indices [3,2,4,0] in extended dict ["A","B","C","D","E"] -> ["D","C","E","A"]
+        const auto& rb1 = result[1];
+        REQUIRE_EQ(rb1.nb_rows(), size_t{4});
+        // rb1[1]="C" matches rb0[2]="C"
+        CHECK_EQ(rb1.get_column(0)[1], rb0.get_column(0)[2]);
+        // rb1[3]="A" matches rb0[0]="A"
+        CHECK_EQ(rb1.get_column(0)[3], rb0.get_column(0)[0]);
+        // rb1[0]="D" and rb1[2]="E" are delta values absent from rb0
+        CHECK_NE(rb1.get_column(0)[0], rb1.get_column(0)[2]);   // "D" != "E"
+        CHECK_NE(rb1.get_column(0)[0], rb0.get_column(0)[0]);   // "D" != "A"
+        CHECK_NE(rb1.get_column(0)[0], rb0.get_column(0)[1]);   // "D" != "B"
+        CHECK_NE(rb1.get_column(0)[0], rb0.get_column(0)[2]);   // "D" != "C"
+        CHECK_NE(rb1.get_column(0)[2], rb0.get_column(0)[0]);   // "E" != "A"
+        CHECK_NE(rb1.get_column(0)[2], rb0.get_column(0)[1]);   // "E" != "B"
+        CHECK_NE(rb1.get_column(0)[2], rb0.get_column(0)[2]);   // "E" != "C"
     }
 }
