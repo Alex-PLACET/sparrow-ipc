@@ -1,5 +1,6 @@
 #include "sparrow_ipc/deserialize.hpp"
 
+#include <memory>
 #include <unordered_map>
 
 #include "array_deserializer.hpp"
@@ -17,6 +18,10 @@ namespace sparrow_ipc
     {
         // End-of-stream marker size in bytes
         constexpr size_t END_OF_STREAM_MARKER_SIZE = 8;
+        constexpr int DICTIONARY_INDEX_BIT_WIDTH_8 = 8;
+        constexpr int DICTIONARY_INDEX_BIT_WIDTH_16 = 16;
+        constexpr int DICTIONARY_INDEX_BIT_WIDTH_32 = 32;
+        constexpr int DICTIONARY_INDEX_BIT_WIDTH_64 = 64;
 
         void collect_dictionary_fields(
             const org::apache::arrow::flatbuf::Field& field,
@@ -81,10 +86,12 @@ namespace sparrow_ipc
             );
             auto dictionary_arrow_schema = sparrow::copy_schema(dictionary_proxy.schema());
 
-            index_arrow_array.dictionary = new ArrowArray(std::move(dictionary_arrow_array));
-            index_arrow_schema.dictionary = new ArrowSchema(std::move(dictionary_arrow_schema));
+            auto dictionary_array_ptr = std::make_unique<ArrowArray>(dictionary_arrow_array);
+            auto dictionary_schema_ptr = std::make_unique<ArrowSchema>(dictionary_arrow_schema);
+            index_arrow_array.dictionary = dictionary_array_ptr.release();
+            index_arrow_schema.dictionary = dictionary_schema_ptr.release();
 
-            return sparrow::array(std::move(index_arrow_array), std::move(index_arrow_schema));
+            return sparrow::array(ArrowArray(index_arrow_array), ArrowSchema(index_arrow_schema));
         }
 
         sparrow::record_batch deserialize_dictionary_batch(
@@ -167,54 +174,38 @@ namespace sparrow_ipc
             const auto bit_width = index_type->bitWidth();
             const bool is_signed = index_type->is_signed();
 
-            if (is_signed)
+            const auto deserialize_for = [&]<class T>() -> sparrow::array
             {
-                switch (bit_width)
-                {
-                    case 8:
-                        return sparrow::array(deserialize_primitive_array<int8_t>(
-                            record_batch, body, length, name, metadata, nullable, buffer_index
-                        ));
-                    case 16:
-                        return sparrow::array(deserialize_primitive_array<int16_t>(
-                            record_batch, body, length, name, metadata, nullable, buffer_index
-                        ));
-                    case 32:
-                        return sparrow::array(deserialize_primitive_array<int32_t>(
-                            record_batch, body, length, name, metadata, nullable, buffer_index
-                        ));
-                    case 64:
-                        return sparrow::array(deserialize_primitive_array<int64_t>(
-                            record_batch, body, length, name, metadata, nullable, buffer_index
-                        ));
-                    default:
-                        throw std::runtime_error(
-                            "Unsupported signed dictionary index bit width: " + std::to_string(bit_width)
-                        );
-                }
-            }
+                return sparrow::array(
+                    deserialize_primitive_array<T>(
+                        record_batch,
+                        body,
+                        length,
+                        name,
+                        metadata,
+                        nullable,
+                        buffer_index
+                    )
+                );
+            };
 
             switch (bit_width)
             {
-                case 8:
-                    return sparrow::array(deserialize_primitive_array<uint8_t>(
-                        record_batch, body, length, name, metadata, nullable, buffer_index
-                    ));
-                case 16:
-                    return sparrow::array(deserialize_primitive_array<uint16_t>(
-                        record_batch, body, length, name, metadata, nullable, buffer_index
-                    ));
-                case 32:
-                    return sparrow::array(deserialize_primitive_array<uint32_t>(
-                        record_batch, body, length, name, metadata, nullable, buffer_index
-                    ));
-                case 64:
-                    return sparrow::array(deserialize_primitive_array<uint64_t>(
-                        record_batch, body, length, name, metadata, nullable, buffer_index
-                    ));
+                case DICTIONARY_INDEX_BIT_WIDTH_8:
+                    return is_signed ? deserialize_for.template operator()<int8_t>()
+                                     : deserialize_for.template operator()<uint8_t>();
+                case DICTIONARY_INDEX_BIT_WIDTH_16:
+                    return is_signed ? deserialize_for.template operator()<int16_t>()
+                                     : deserialize_for.template operator()<uint16_t>();
+                case DICTIONARY_INDEX_BIT_WIDTH_32:
+                    return is_signed ? deserialize_for.template operator()<int32_t>()
+                                     : deserialize_for.template operator()<uint32_t>();
+                case DICTIONARY_INDEX_BIT_WIDTH_64:
+                    return is_signed ? deserialize_for.template operator()<int64_t>()
+                                     : deserialize_for.template operator()<uint64_t>();
                 default:
                     throw std::runtime_error(
-                        "Unsupported unsigned dictionary index bit width: " + std::to_string(bit_width)
+                        "Unsupported dictionary index bit width: " + std::to_string(bit_width)
                     );
             }
         }
@@ -269,7 +260,6 @@ namespace sparrow_ipc
             const std::optional<std::vector<sparrow::metadata_pair>>& metadata = field_metadata[field_idx++];
             const std::string name = field->name() == nullptr ? "" : field->name()->str();
             const bool nullable = field->nullable();
-            const auto field_type = field->type_type();
 
             sparrow::array decoded = field->dictionary() != nullptr
                                         ? deserialize_dictionary_indices(
