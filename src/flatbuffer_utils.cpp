@@ -469,14 +469,19 @@ namespace sparrow_ipc
     ::flatbuffers::Offset<org::apache::arrow::flatbuf::Field> create_field(
         flatbuffers::FlatBufferBuilder& builder,
         const ArrowSchema& arrow_schema,
-        std::string_view name_override,
-        int64_t dictionary_id_override
+        std::optional<std::string_view> name_override,
+        std::optional<int64_t> dictionary_id_override
     )
     {
         const bool is_dictionary_encoded = arrow_schema.dictionary != nullptr;
         const ArrowSchema& value_schema = is_dictionary_encoded ? *arrow_schema.dictionary : arrow_schema;
 
-        flatbuffers::Offset<flatbuffers::String> fb_name_offset = builder.CreateString(name_override);
+        // Determine the field name to use
+        const std::string field_name = name_override.has_value() 
+            ? std::string(name_override.value())
+            : (arrow_schema.name != nullptr ? arrow_schema.name : "field");
+
+        flatbuffers::Offset<flatbuffers::String> fb_name_offset = builder.CreateString(field_name);
         const auto [type_enum, type_offset] = get_flatbuffer_type(builder, value_schema.format);
         auto fb_metadata_offset = create_metadata(builder, arrow_schema);
         const auto children = create_children(builder, value_schema);
@@ -489,8 +494,11 @@ namespace sparrow_ipc
             const auto dict_metadata = parse_dictionary_metadata(arrow_schema);
             const bool is_ordered = dict_metadata.is_ordered;
 
-            // If no ID in metadata, use a hash of the field name
-            const int64_t dict_id = dict_metadata.id.value_or(dictionary_id_override);
+            // If no ID in metadata, use the provided override or compute a fallback
+            const int64_t fallback_id = dictionary_id_override.value_or(
+                compute_fallback_dictionary_id(field_name, 0)
+            );
+            const int64_t dict_id = dict_metadata.id.value_or(fallback_id);
 
             // Create index type from the schema's format (the indices type)
             const auto index_data_type = sparrow::format_to_data_type(arrow_schema.format);

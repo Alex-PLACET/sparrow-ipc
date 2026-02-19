@@ -219,34 +219,6 @@ namespace sparrow_ipc
                 for (const auto& dict_info : dictionaries)
                 {
                     const int64_t dict_offset = static_cast<int64_t>(m_stream.size());
-                    const auto reserve_function = [&record_batches, &compressed_buffers_cache, this]()
-                    {
-                        dictionary_tracker local_tracker = m_dict_tracker;  // Local copy for estimation
-                        return std::accumulate(
-                                   record_batches.begin(),
-                                   record_batches.end(),
-                                   m_stream.size(),
-                                   [&compressed_buffers_cache, &local_tracker, this](size_t acc, const sparrow::record_batch& rb)
-                                   {
-                                       size_t dictionaries_size = 0;
-                                       const auto dictionaries = local_tracker.extract_dictionaries_from_batch(rb);
-                                       for (const auto& dict_info : dictionaries)
-                                       {
-                                           dictionaries_size += calculate_record_batch_message_size(
-                                               dict_info.data,
-                                               m_compression,
-                                               compressed_buffers_cache
-                                           );
-                                           local_tracker.mark_emitted(dict_info.id);  // Mark during estimation
-                                       }
-
-                                       return acc
-                                              + dictionaries_size
-                                              + calculate_record_batch_message_size(rb, m_compression, compressed_buffers_cache);
-                                   }
-                               )
-                               + (m_schema_received ? 0 : calculate_schema_message_size(*record_batches.begin()));
-                    };
                     const auto dict_block_info = serialize_dictionary_batch(
                         dict_info.id,
                         dict_info.data,
